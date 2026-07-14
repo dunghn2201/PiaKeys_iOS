@@ -31,7 +31,7 @@ final class BLEMIDIManager: NSObject, ObservableObject {
         centralManager = CBCentralManager(
             delegate: self,
             queue: .main,
-            options: [CBCentralManagerOptionShowPowerAlertKey: true]
+            options: [CBCentralManagerOptionShowPowerAlertKey: false]
         )
     }
 

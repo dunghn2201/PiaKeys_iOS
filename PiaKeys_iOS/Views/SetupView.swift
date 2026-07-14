@@ -63,6 +63,24 @@ struct SetupView: View {
                     Spacer()
                 }
 
+                if viewModel.bleStatus.isUnavailable {
+                    Label {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(viewModel.bleStatus.message)
+                                .font(.subheadline.weight(.semibold))
+                            Text("Enable Bluetooth from Control Center or Settings, then return here and tap Scan.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "bluetooth.slash")
+                            .foregroundStyle(PiaKeysTheme.purple)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(PiaKeysTheme.purple.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                }
+
                 if viewModel.bleCompatibilityScanActive {
                     Label(
                         "MIDI service was not advertised. Showing named nearby BLE devices for compatibility.",

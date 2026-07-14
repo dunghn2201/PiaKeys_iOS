@@ -60,6 +60,7 @@ struct MetronomeView: View {
                     tempo: viewModel.tempo,
                     running: viewModel.metronomeRunning,
                     beat: viewModel.metronomeBeat,
+                    beatCount: Int(viewModel.timeSignature.split(separator: "/").first ?? "4") ?? 4,
                     visualPulse: viewModel.visualPulse
                 )
                 .frame(height: 300)
@@ -164,6 +165,7 @@ private struct PendulumView: View {
     let tempo: Int
     let running: Bool
     let beat: Int
+    let beatCount: Int
     let visualPulse: Bool
 
     var body: some View {
@@ -188,9 +190,13 @@ private struct PendulumView: View {
                 context.stroke(line, with: .color(PiaKeysTheme.navy.opacity(0.82)), lineWidth: 4)
                 context.fill(Path(ellipseIn: CGRect(x: bob.x - 12, y: bob.y - 12, width: 24, height: 24)), with: .color(PiaKeysTheme.gold))
 
-                for index in 0..<5 {
-                    let x = size.width * (0.18 + Double(index) * 0.16)
-                    let active = visualPulse && running && index == beat % 5
+                let displayedBeatCount = max(1, beatCount)
+                for index in 0..<displayedBeatCount {
+                    let progress = displayedBeatCount == 1
+                        ? 0.5
+                        : 0.18 + Double(index) * 0.64 / Double(displayedBeatCount - 1)
+                    let x = size.width * progress
+                    let active = visualPulse && running && index == beat % displayedBeatCount
                     context.fill(
                         Path(ellipseIn: CGRect(x: x - (active ? 6 : 3), y: size.height * 0.27, width: active ? 12 : 6, height: active ? 12 : 6)),
                         with: .color(active ? PiaKeysTheme.gold : Color.secondary.opacity(0.25))

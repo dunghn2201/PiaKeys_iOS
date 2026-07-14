@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <style>
-    html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
-    #score { width: 100%; height: 100vh; overflow: hidden; }
-    #score svg { display: block; width: 100%; height: auto; }
+    html, body { margin: 0; padding: 0; background: #fff; overflow: hidden; }
+    #score { width: 100%; height: 100vh; overflow: hidden; background: #fff; }
+    #score svg { display: block; width: 100%; height: auto; background: #fff; }
     #score .playing, #score .playing * { fill: #7c4dff !important; stroke: #7c4dff !important; }
     #message { padding: 20px; color: #596579; font: 14px sans-serif; }
   </style>
@@ -27,6 +27,15 @@
     function renderPage(page) {
       currentPage = Math.max(1, Math.min(page, toolkit.getPageCount()));
       document.getElementById('score').innerHTML = toolkit.renderToSVG(currentPage, false);
+      reportScoreHeight();
+    }
+
+    function reportScoreHeight() {
+      requestAnimationFrame(function() {
+        const svg = document.querySelector('#score svg');
+        if (!svg || !window.webkit || !window.webkit.messageHandlers.scoreHeight) return;
+        window.webkit.messageHandlers.scoreHeight.postMessage(Math.ceil(svg.getBoundingClientRect().height));
+      });
     }
 
     function loadScore(base64, compressed) {
@@ -66,6 +75,7 @@
     }
 
     window.renderScore = loadScore;
+    window.addEventListener('resize', reportScoreHeight);
     window.setPlaybackTime = function(milliseconds) {
       if (!toolkit || toolkit.getPageCount() === 0) return;
       highlightedIds.forEach(function(id) {

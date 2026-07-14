@@ -99,6 +99,11 @@ enum MIDIConnectionStatus: Equatable, Sendable {
         }
     }
 
+    var isUnavailable: Bool {
+        if case .unavailable = self { return true }
+        return false
+    }
+
     var canSend: Bool {
         if case let .connected(_, canSend) = self { return canSend }
         return false

@@ -51,6 +51,7 @@ final class MainViewModel: ObservableObject {
     private var metronomeTask: Task<Void, Never>?
     private var playbackTask: Task<Void, Never>?
     private var noteOffTasks: [UUID: Task<Void, Never>] = [:]
+    private var activeSongNoteCounts: [Int: Int] = [:]
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -67,6 +68,11 @@ final class MainViewModel: ObservableObject {
 
         audio.setVolume(audioVolume)
         bindManagers()
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--audio-self-test") {
+            audio.runSelfTest()
+        }
+#endif
     }
 
     deinit {
@@ -257,6 +263,10 @@ final class MainViewModel: ObservableObject {
 
         playbackTask = Task { [weak self] in
             guard let self else { return }
+            await audio.prepareForPlayback(
+                notes: song.notes.map { ($0.noteNumber, $0.velocity) }
+            )
+            guard !Task.isCancelled else { return }
             let clock = ContinuousClock()
             let startedAt = clock.now - .milliseconds(startingPosition)
             var index = song.notes.firstIndex {
@@ -283,6 +293,7 @@ final class MainViewModel: ObservableObject {
     }
 
     private func playSongNote(_ note: SongNote) {
+        activeSongNoteCounts[note.noteNumber, default: 0] += 1
         activeSongNotes.insert(note.noteNumber)
         latestSongNoteNumber = note.noteNumber
         if audioEnabled {
@@ -298,8 +309,14 @@ final class MainViewModel: ObservableObject {
         noteOffTasks[taskID] = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(max(140, note.durationMilliseconds)))
             guard let self, !Task.isCancelled else { return }
-            self.activeSongNotes.remove(note.noteNumber)
-            self.sendSongNoteOff(note.noteNumber)
+            let remaining = max(0, (self.activeSongNoteCounts[note.noteNumber] ?? 1) - 1)
+            if remaining == 0 {
+                self.activeSongNoteCounts.removeValue(forKey: note.noteNumber)
+                self.activeSongNotes.remove(note.noteNumber)
+                self.sendSongNoteOff(note.noteNumber)
+            } else {
+                self.activeSongNoteCounts[note.noteNumber] = remaining
+            }
             self.noteOffTasks.removeValue(forKey: taskID)
         }
     }
@@ -331,6 +348,7 @@ final class MainViewModel: ObservableObject {
         noteOffTasks.values.forEach { $0.cancel() }
         noteOffTasks.removeAll()
         for note in activeSongNotes { sendSongNoteOff(note) }
+        activeSongNoteCounts.removeAll()
         activeSongNotes = []
         songPlaying = false
         if clearPosition {

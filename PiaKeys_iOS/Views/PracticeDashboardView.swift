@@ -9,6 +9,7 @@ struct PracticeDashboardView: View {
     @State private var importingSong = false
     @State private var importingScore = false
     @State private var showingFullKeyboard = false
+    @State private var scoreContentHeight: CGFloat = 180
 
     private var copy: LocalizedCopy { .init(language: viewModel.language) }
     private var activeEvent: MIDINoteEvent? { viewModel.activeNoteEvent }
@@ -203,8 +204,13 @@ struct PracticeDashboardView: View {
                     Button(copy.importScore) { importingScore = true }
                         .font(.caption)
                 }
-                MusicXMLScoreView(url: url, positionMilliseconds: viewModel.songPositionMilliseconds)
-                    .frame(height: 300)
+                MusicXMLScoreView(
+                    url: url,
+                    positionMilliseconds: viewModel.songPositionMilliseconds,
+                    contentHeight: $scoreContentHeight
+                )
+                    .frame(height: scoreContentHeight)
+                    .animation(.easeInOut(duration: 0.2), value: scoreContentHeight)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
         }
