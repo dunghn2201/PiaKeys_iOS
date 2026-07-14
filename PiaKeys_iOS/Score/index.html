@@ -1,0 +1,103 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <style>
+    html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+    #score { width: 100%; height: 100vh; overflow: hidden; }
+    #score svg { display: block; width: 100%; height: auto; }
+    #score .playing, #score .playing * { fill: #7c4dff !important; stroke: #7c4dff !important; }
+    #message { padding: 20px; color: #596579; font: 14px sans-serif; }
+  </style>
+  <script src="verovio-toolkit-wasm.js"></script>
+</head>
+<body>
+  <div id="score"><div id="message">Loading score...</div></div>
+  <script>
+    let toolkit = null;
+    let pendingScore = null;
+    let currentPage = 1;
+    let highlightedIds = [];
+
+    function showMessage(message) {
+      document.getElementById('score').innerHTML = '<div id="message">' + message + '</div>';
+    }
+
+    function renderPage(page) {
+      currentPage = Math.max(1, Math.min(page, toolkit.getPageCount()));
+      document.getElementById('score').innerHTML = toolkit.renderToSVG(currentPage, false);
+    }
+
+    function loadScore(base64, compressed) {
+      if (!toolkit) {
+        pendingScore = { base64: base64, compressed: compressed };
+        return;
+      }
+      try {
+        console.log('Rendering MusicXML score, compressed=' + compressed);
+        toolkit.setOptions({
+          pageWidth: 1500,
+          pageHeight: 520,
+          scale: 42,
+          adjustPageHeight: true,
+          breaks: 'auto',
+          header: 'none',
+          footer: 'none',
+          spacingStaff: 10,
+          spacingSystem: 5
+        });
+        const loaded = compressed
+          ? toolkit.loadZipDataBase64(base64)
+          : toolkit.loadData(new TextDecoder('utf-8').decode(
+              Uint8Array.from(atob(base64), function(character) { return character.charCodeAt(0); })
+            ));
+        if (!loaded) {
+          console.error('Verovio rejected the MusicXML score');
+          showMessage('Unable to read this MusicXML score.');
+          return;
+        }
+        renderPage(1);
+        console.log('MusicXML rendered with ' + toolkit.getPageCount() + ' pages');
+      } catch (error) {
+        console.error('MusicXML rendering failed: ' + error);
+        showMessage('Unable to render this MusicXML score.');
+      }
+    }
+
+    window.renderScore = loadScore;
+    window.setPlaybackTime = function(milliseconds) {
+      if (!toolkit || toolkit.getPageCount() === 0) return;
+      highlightedIds.forEach(function(id) {
+        const element = document.getElementById(id);
+        if (element) element.classList.remove('playing');
+      });
+      highlightedIds = [];
+
+      const elements = toolkit.getElementsAtTime(Math.max(0, milliseconds));
+      const noteIds = elements && elements.notes ? elements.notes : [];
+      if (noteIds.length > 0) {
+        const page = toolkit.getPageWithElement(noteIds[0]);
+        if (page > 0 && page !== currentPage) renderPage(page);
+        noteIds.forEach(function(id) {
+          const element = document.getElementById(id);
+          if (element) {
+            element.classList.add('playing');
+            highlightedIds.push(id);
+          }
+        });
+      }
+    };
+
+    verovio.module.onRuntimeInitialized = function() {
+      console.log('Verovio runtime initialized');
+      toolkit = new verovio.toolkit();
+      if (pendingScore) {
+        const score = pendingScore;
+        pendingScore = null;
+        loadScore(score.base64, score.compressed);
+      }
+    };
+  </script>
+</body>
+</html>
