@@ -96,6 +96,8 @@ struct PlaybackRegression {
         model.toggleSongPlayback()
         try await Task.sleep(for: .milliseconds(50))
         precondition(model.songPlaying && !model.activeSongNotes.isEmpty, "Playback started")
+        precondition(model.activeNoteEvent?.source == .song, "Song playback drives live note monitor")
+        precondition(model.noteEvents.first?.source == .song, "Song playback is recorded in recent notes")
         precondition(PianoAudioEngine.played.isEmpty, "External MIDI route must not render app audio")
         let active = model.activeSongNotes
         model.songOutputRoute = .appOnly

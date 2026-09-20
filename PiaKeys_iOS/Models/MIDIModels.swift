@@ -43,6 +43,7 @@ enum MIDIInputSource: String, Sendable {
     case ble = "BLE"
     case wired = "MIDI"
     case preview = "Preview"
+    case song = "Song"
 }
 
 struct RawMIDIPacket: Identifiable, Hashable, Sendable {

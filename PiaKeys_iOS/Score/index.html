@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <style>
     html, body { margin: 0; padding: 0; background: #fff; overflow: hidden; }
-    #score { width: 100%; height: 100vh; overflow: hidden; background: #fff; }
+    #score { width: 100%; min-height: 100%; overflow: visible; background: #fff; }
     #score svg { display: block; width: 100%; height: auto; background: #fff; }
     #score .playing, #score .playing * { fill: #7c4dff !important; stroke: #7c4dff !important; }
     #message { padding: 20px; color: #596579; font: 14px sans-serif; }
@@ -32,25 +32,41 @@
 
     function reportScoreHeight() {
       requestAnimationFrame(function() {
-        const svg = document.querySelector('#score svg');
-        if (!svg || !window.webkit || !window.webkit.messageHandlers.scoreHeight) return;
-        window.webkit.messageHandlers.scoreHeight.postMessage(Math.ceil(svg.getBoundingClientRect().height));
+        const score = document.getElementById('score');
+        if (!score || !window.webkit || !window.webkit.messageHandlers.scoreHeight) return;
+        window.webkit.messageHandlers.scoreHeight.postMessage(Math.ceil(Math.max(
+          score.scrollHeight,
+          score.getBoundingClientRect().height
+        )));
       });
     }
 
-    function loadScore(base64, compressed) {
+    function renderScorePages(allPages) {
+      const pageCount = toolkit.getPageCount();
+      const pages = [];
+      const lastPage = allPages ? pageCount : 1;
+      for (let page = 1; page <= lastPage; page += 1) {
+        pages.push(toolkit.renderToSVG(page, false));
+      }
+      currentPage = 1;
+      document.getElementById('score').innerHTML = pages.join('');
+      reportScoreHeight();
+    }
+
+    function loadScore(base64, compressed, allPages) {
       if (!toolkit) {
-        pendingScore = { base64: base64, compressed: compressed };
+        pendingScore = { base64: base64, compressed: compressed, allPages: allPages };
         return;
       }
       try {
         console.log('Rendering MusicXML score, compressed=' + compressed);
         toolkit.setOptions({
           pageWidth: 1500,
-          pageHeight: 520,
+          pageHeight: 10000,
           scale: 42,
           adjustPageHeight: true,
           breaks: 'auto',
+          justifyVertically: false,
           header: 'none',
           footer: 'none',
           spacingStaff: 10,
@@ -66,7 +82,7 @@
           showMessage('Unable to read this MusicXML score.');
           return;
         }
-        renderPage(1);
+        renderScorePages(allPages);
         console.log('MusicXML rendered with ' + toolkit.getPageCount() + ' pages');
       } catch (error) {
         console.error('MusicXML rendering failed: ' + error);
@@ -88,7 +104,7 @@
       const noteIds = elements && elements.notes ? elements.notes : [];
       if (noteIds.length > 0) {
         const page = toolkit.getPageWithElement(noteIds[0]);
-        if (page > 0 && page !== currentPage) renderPage(page);
+        if (page > 0) currentPage = page;
         noteIds.forEach(function(id) {
           const element = document.getElementById(id);
           if (element) {
@@ -105,7 +121,7 @@
       if (pendingScore) {
         const score = pendingScore;
         pendingScore = null;
-        loadScore(score.base64, score.compressed);
+        loadScore(score.base64, score.compressed, score.allPages);
       }
     };
   </script>

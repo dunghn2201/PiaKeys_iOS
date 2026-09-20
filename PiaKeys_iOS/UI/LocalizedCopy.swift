@@ -17,12 +17,16 @@ struct LocalizedCopy {
     var songs: String { value("Songs", "Bài nhạc", "曲") }
     var learnNotes: String { value("Learn notes live", "Học nốt trực tiếp", "音符をリアルタイム学習") }
     var inputSubtitle: String { value("Bluetooth and wired MIDI input", "MIDI Bluetooth và có dây", "Bluetooth・有線MIDI入力") }
+    var liveMonitorSubtitle: String { value("MIDI input and song playback", "MIDI và phát bài nhạc", "MIDI入力と曲の再生") }
     var liveMonitor: String { value("Live note monitor", "Theo dõi nốt trực tiếp", "ライブ音符モニター") }
     var recentNotes: String { value("Recent notes", "Các nốt gần đây", "最近の音符") }
     var source: String { value("Source", "Nguồn", "入力") }
     var velocity: String { value("Velocity", "Lực nhấn", "ベロシティ") }
     var event: String { value("Event", "Sự kiện", "イベント") }
     var sheetPreview: String { value("Sheet preview", "Xem trước bản nhạc", "楽譜プレビュー") }
+    var sheetMusic: String { value("Sheet music", "Bản nhạc", "楽譜") }
+    var openSheet: String { value("Open sheet music", "Mở bản nhạc", "楽譜を開く") }
+    var close: String { value("Done", "Xong", "完了") }
     var keyboard: String { value("Keyboard", "Bàn phím", "鍵盤") }
     var noNotes: String { value("Play a key to begin.", "Hãy chơi một phím để bắt đầu.", "鍵盤を弾いて始めましょう。") }
     var chord: String { value("Chord", "Hợp âm", "コード") }

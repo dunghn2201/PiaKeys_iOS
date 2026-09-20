@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct PracticeDashboardView: View {
@@ -10,6 +11,7 @@ struct PracticeDashboardView: View {
     @State private var importingScore = false
     @State private var showingFullKeyboard = false
     @State private var scoreContentHeight: CGFloat = 180
+    @State private var sheetDetail: SheetDetail?
 
     private var copy: LocalizedCopy { .init(language: viewModel.language) }
     private var activeEvent: MIDINoteEvent? { viewModel.activeNoteEvent }
@@ -67,8 +69,21 @@ struct PracticeDashboardView: View {
         } message: {
             Text(viewModel.importMessage ?? "")
         }
-        .fullScreenCover(isPresented: $showingFullKeyboard) {
-            FullKeyboardView(viewModel: viewModel)
+        .background {
+            LandscapeKeyboardPresenter(
+                isPresented: $showingFullKeyboard,
+                viewModel: viewModel
+            )
+            .frame(width: 0, height: 0)
+        }
+        .sheet(item: $sheetDetail) { detail in
+            SheetMusicDetailView(
+                detail: detail,
+                positionMilliseconds: viewModel.songPositionMilliseconds,
+                copy: copy
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
     }
 
@@ -76,7 +91,7 @@ struct PracticeDashboardView: View {
         PiaKeysCard {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top) {
-                    SectionTitle(title: copy.liveMonitor, subtitle: copy.inputSubtitle, symbol: "waveform.path")
+                    SectionTitle(title: copy.liveMonitor, subtitle: copy.liveMonitorSubtitle, symbol: "waveform.path")
                     Spacer()
                     VStack(spacing: 0) {
                         Text(activeEvent?.noteName ?? "—")
@@ -186,11 +201,18 @@ struct PracticeDashboardView: View {
                     Button(copy.importScore) { importingScore = true }
                         .font(.caption)
                 }
-                SongStaffPreview(
-                    song: viewModel.selectedSong,
-                    positionMilliseconds: viewModel.songPositionMilliseconds,
-                    activeNotes: viewModel.activeSongNotes
-                )
+                Button { sheetDetail = .generated(viewModel.selectedSong) } label: {
+                    ZStack(alignment: .bottomTrailing) {
+                        SongStaffPreview(
+                            song: viewModel.selectedSong,
+                            positionMilliseconds: viewModel.songPositionMilliseconds,
+                            activeNotes: viewModel.activeSongNotes
+                        )
+                        openSheetHint
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(copy.openSheet)
             }
         }
     }
@@ -204,16 +226,34 @@ struct PracticeDashboardView: View {
                     Button(copy.importScore) { importingScore = true }
                         .font(.caption)
                 }
-                MusicXMLScoreView(
-                    url: url,
-                    positionMilliseconds: viewModel.songPositionMilliseconds,
-                    contentHeight: $scoreContentHeight
-                )
+                Button { sheetDetail = .musicXML(url) } label: {
+                    ZStack(alignment: .bottomTrailing) {
+                        MusicXMLScoreView(
+                            url: url,
+                            positionMilliseconds: viewModel.songPositionMilliseconds,
+                            contentHeight: $scoreContentHeight
+                        )
+                        .allowsHitTesting(false)
+                        openSheetHint
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(copy.openSheet)
                     .frame(height: scoreContentHeight)
                     .animation(.easeInOut(duration: 0.2), value: scoreContentHeight)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
         }
+    }
+
+    private var openSheetHint: some View {
+        Label(copy.openSheet, systemImage: "arrow.up.left.and.arrow.down.right")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(PiaKeysTheme.purple)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(.regularMaterial, in: Capsule())
+            .padding(10)
     }
 
     private var keyboardCard: some View {
@@ -336,43 +376,269 @@ struct PracticeDashboardView: View {
     }
 }
 
-private struct FullKeyboardView: View {
-    @ObservedObject var viewModel: MainViewModel
+private enum SheetDetail: Identifiable {
+    case generated(PracticeSong?)
+    case musicXML(URL)
+
+    var id: String {
+        switch self {
+        case .generated: "generated"
+        case let .musicXML(url): "musicxml:\(url.path)"
+        }
+    }
+}
+
+private struct SheetMusicDetailView: View {
+    let detail: SheetDetail
+    let positionMilliseconds: Int64
+    let copy: LocalizedCopy
+
     @Environment(\.dismiss) private var dismiss
+    @State private var scoreContentHeight: CGFloat = 520
 
     var body: some View {
         NavigationStack {
-            GeometryReader { proxy in
-                let rowHeight = max(130, (proxy.size.height - 80) / 2)
-                VStack(spacing: 12) {
-                    PianoKeyboardView(
-                        activeNotes: viewModel.heldNoteNumbers.union(viewModel.activeSongNotes),
-                        firstNote: 21,
-                        lastNote: 64,
-                        height: rowHeight,
-                        fitToWidth: true,
-                        onNoteOn: viewModel.beginPreviewNote,
-                        onNoteOff: viewModel.endPreviewNote
-                    )
-                    PianoKeyboardView(
-                        activeNotes: viewModel.heldNoteNumbers.union(viewModel.activeSongNotes),
-                        firstNote: 65,
-                        lastNote: 108,
-                        height: rowHeight,
-                        fitToWidth: true,
-                        onNoteOn: viewModel.beginPreviewNote,
-                        onNoteOff: viewModel.endPreviewNote
-                    )
+            Group {
+                switch detail {
+                case let .generated(song):
+                    ScrollView {
+                        if let song {
+                            GeneratedSongScoreView(
+                                song: song,
+                                positionMilliseconds: positionMilliseconds,
+                                height: 420,
+                                showsAllPages: true
+                            )
+                            .padding()
+                        } else {
+                            ContentUnavailableView("No sheet music", systemImage: "music.note.list")
+                        }
+                    }
+                case let .musicXML(url):
+                    ScrollView(.vertical) {
+                        MusicXMLScoreView(
+                            url: url,
+                            positionMilliseconds: positionMilliseconds,
+                            contentHeight: $scoreContentHeight,
+                            heightRange: 360...60_000,
+                            showsAllPages: true
+                        )
+                        .frame(maxWidth: .infinity)
+                        .frame(height: max(360, scoreContentHeight))
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .padding()
+                    }
                 }
-                .padding()
             }
-            .navigationTitle("88-key piano")
+            .navigationTitle(copy.sheetMusic)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    Button(copy.close) { dismiss() }
                 }
             }
         }
+    }
+}
+
+private struct FullKeyboardView: View {
+    @ObservedObject var viewModel: MainViewModel
+    let onDone: () -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            let rowHeight = max(130, (proxy.size.height - 76) / 2)
+            VStack(spacing: 12) {
+                HStack {
+                    Text("88-key piano")
+                        .font(.headline)
+                    Spacer()
+                    Button("Done", action: onDone)
+                        .buttonStyle(.bordered)
+                }
+
+                PianoKeyboardView(
+                    activeNotes: viewModel.heldNoteNumbers.union(viewModel.activeSongNotes),
+                    firstNote: 21,
+                    lastNote: 64,
+                    height: rowHeight,
+                    fitToWidth: true,
+                    onNoteOn: viewModel.beginPreviewNote,
+                    onNoteOff: viewModel.endPreviewNote
+                )
+                PianoKeyboardView(
+                    activeNotes: viewModel.heldNoteNumbers.union(viewModel.activeSongNotes),
+                    firstNote: 65,
+                    lastNote: 108,
+                    height: rowHeight,
+                    fitToWidth: true,
+                    onNoteOn: viewModel.beginPreviewNote,
+                    onNoteOff: viewModel.endPreviewNote
+                )
+            }
+            .padding()
+        }
+        .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+    }
+}
+
+private struct LandscapeKeyboardPresenter: UIViewControllerRepresentable {
+    @Binding var isPresented: Bool
+    let viewModel: MainViewModel
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isPresented: $isPresented, viewModel: viewModel)
+    }
+
+    func makeUIViewController(context: Context) -> PresentationAnchorViewController {
+        let controller = PresentationAnchorViewController()
+        context.coordinator.presenter = controller
+        controller.onReady = { [weak coordinator = context.coordinator] in
+            coordinator?.updatePresentation()
+        }
+        return controller
+    }
+
+    func updateUIViewController(
+        _ uiViewController: PresentationAnchorViewController,
+        context: Context
+    ) {
+        context.coordinator.presenter = uiViewController
+        context.coordinator.isPresented = $isPresented
+        context.coordinator.updatePresentation()
+    }
+
+    final class Coordinator: NSObject, UIAdaptivePresentationControllerDelegate {
+        var isPresented: Binding<Bool>
+        let viewModel: MainViewModel
+        weak var presenter: UIViewController?
+        weak var keyboard: LandscapeKeyboardHostingController?
+        private var isPresenting = false
+        private var isDismissing = false
+        private var portraitResetWorkItem: DispatchWorkItem?
+
+        init(isPresented: Binding<Bool>, viewModel: MainViewModel) {
+            self.isPresented = isPresented
+            self.viewModel = viewModel
+        }
+
+        func updatePresentation() {
+            if isPresented.wrappedValue {
+                guard !isDismissing else { return }
+                presentKeyboardIfNeeded()
+            } else if presenter?.presentedViewController is LandscapeKeyboardHostingController,
+                      !isDismissing {
+                dismissKeyboard()
+            }
+        }
+
+        private func presentKeyboardIfNeeded() {
+            guard !isPresenting,
+                  !isDismissing,
+                  keyboard == nil,
+                  let presenter,
+                  presenter.viewIfLoaded?.window != nil,
+                  presenter.presentedViewController == nil else { return }
+
+            portraitResetWorkItem?.cancel()
+            portraitResetWorkItem = nil
+            let scene = presenter.view.window?.windowScene
+
+            // UIKit evaluates the app-level mask while creating this controller.
+            // Set it before presenting so a second open cannot combine a
+            // landscape-only controller with the previous portrait mask.
+            InterfaceOrientationController.prepare(.landscape, in: scene)
+            isPresenting = true
+            let keyboard = LandscapeKeyboardHostingController(
+                rootView: FullKeyboardView(viewModel: viewModel) { [weak self] in
+                    self?.dismissKeyboard()
+                }
+            )
+            self.keyboard = keyboard
+            keyboard.modalPresentationStyle = .fullScreen
+            presenter.present(keyboard, animated: true) { [weak self, weak keyboard] in
+                guard let self else { return }
+                self.isPresenting = false
+                keyboard?.presentationController?.delegate = self
+                InterfaceOrientationController.request(
+                    .landscape,
+                    in: keyboard?.view.window?.windowScene ?? scene
+                )
+            }
+        }
+
+        private func dismissKeyboard() {
+            guard !isDismissing else { return }
+            guard let presenter,
+                  let keyboard = self.keyboard ?? presenter.presentedViewController as? LandscapeKeyboardHostingController else {
+                isPresented.wrappedValue = false
+                schedulePortraitReset(in: presenter?.view.window?.windowScene)
+                return
+            }
+            self.keyboard = keyboard
+            isDismissing = true
+            isPresented.wrappedValue = false
+            let scene = keyboard.view.window?.windowScene ?? presenter.view.window?.windowScene
+            keyboard.dismiss(animated: true) { [weak self, weak keyboard] in
+                self?.finishDismissal(of: keyboard, in: scene)
+            }
+        }
+
+        func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+            // Full-screen keyboard dismissal is initiated by Done. Ignore a
+            // late delegate callback from an older presentation so it cannot
+            // mutate the binding for a newly opened keyboard.
+            guard isDismissing else { return }
+            isPresented.wrappedValue = false
+            let scene = presenter?.view.window?.windowScene
+            finishDismissal(of: keyboard, in: scene)
+        }
+
+        private func finishDismissal(
+            of keyboard: LandscapeKeyboardHostingController?,
+            in scene: UIWindowScene?
+        ) {
+            guard isDismissing else { return }
+            if let keyboard, let trackedKeyboard = self.keyboard, keyboard !== trackedKeyboard {
+                return
+            }
+            self.keyboard = nil
+            isPresenting = false
+            isDismissing = false
+            schedulePortraitReset(in: scene)
+        }
+
+        private func schedulePortraitReset(in scene: UIWindowScene?) {
+            portraitResetWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self,
+                      !self.isPresented.wrappedValue,
+                      !self.isPresenting,
+                      !self.isDismissing else { return }
+                InterfaceOrientationController.request(.portrait, in: scene)
+            }
+            portraitResetWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
+        }
+    }
+}
+
+private final class PresentationAnchorViewController: UIViewController {
+    var onReady: (() -> Void)?
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        onReady?()
+    }
+}
+
+private final class LandscapeKeyboardHostingController: UIHostingController<FullKeyboardView> {
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .landscape }
+    override var preferredInterfaceOrientationForPresentation: UIInterfaceOrientation { .landscapeRight }
+    override var shouldAutorotate: Bool { true }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        InterfaceOrientationController.request(.landscape, in: view.window?.windowScene)
     }
 }

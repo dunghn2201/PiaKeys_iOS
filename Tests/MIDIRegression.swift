@@ -75,6 +75,22 @@ struct MIDIRegression {
         check(song.notes[0].remainingDuration(at: 1000) == 500, "Resume remaining duration")
         check(song.notes[0].remainingDuration(at: 1500) == 0, "Do not replay expired note")
 
+        let generatedXML = String(data: GeneratedMusicXMLBuilder.data(for: PracticeSong.demo), encoding: .utf8)!
+        check(generatedXML.contains("<staves>2</staves>"), "Generated score has piano staves")
+        check(generatedXML.contains("<clef number=\"2\">") && generatedXML.contains("<time><beats>3</beats>"), "Generated score has clef and meter")
+        check(generatedXML.contains("<rest/>") && generatedXML.contains("<type>"), "Generated score fills rhythmic gaps")
+        let tiedSong = PracticeSong(
+            id: "notation-regression",
+            title: "Notation",
+            composer: "Test",
+            tempo: 120,
+            timeSignature: "4/4",
+            notes: [.init(startMilliseconds: 0, durationMilliseconds: 3_000, noteNumber: 61, velocity: 100, hand: .right)]
+        )
+        let tiedXML = String(data: GeneratedMusicXMLBuilder.data(for: tiedSong), encoding: .utf8)!
+        check(tiedXML.contains("<accidental>sharp</accidental>"), "Generated score preserves accidentals")
+        check(tiedXML.contains("<tie type=\"start\"/>") && tiedXML.contains("<tie type=\"stop\"/>") , "Generated score splits long notes with ties")
+
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = SongLibraryStore(directory: directory)

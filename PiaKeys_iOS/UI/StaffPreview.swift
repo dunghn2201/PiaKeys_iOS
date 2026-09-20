@@ -3,6 +3,7 @@ import SwiftUI
 struct StaffPreview: View {
     let notes: [MIDINoteEvent]
     let activeNote: Int?
+    var height: CGFloat = 190
 
     var body: some View {
         Canvas { context, size in
@@ -30,7 +31,7 @@ struct StaffPreview: View {
                 )
             }
         }
-        .frame(height: 190)
+        .frame(height: height)
         .background(PiaKeysTheme.paleBlue.opacity(0.5), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityLabel("Grand staff preview")
     }
@@ -98,6 +99,7 @@ struct SongStaffPreview: View {
     let song: PracticeSong?
     let positionMilliseconds: Int64
     let activeNotes: Set<Int>
+    var height: CGFloat = 190
 
     var visibleEvents: [MIDINoteEvent] {
         guard let song else { return [] }
@@ -115,6 +117,14 @@ struct SongStaffPreview: View {
     }
 
     var body: some View {
-        StaffPreview(notes: visibleEvents, activeNote: activeNotes.sorted().last)
+        if let song {
+            GeneratedSongScoreView(
+                song: song,
+                positionMilliseconds: positionMilliseconds,
+                height: height
+            )
+        } else {
+            StaffPreview(notes: visibleEvents, activeNote: activeNotes.sorted().last, height: height)
+        }
     }
 }

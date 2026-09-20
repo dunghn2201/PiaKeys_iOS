@@ -117,7 +117,18 @@ final class MainViewModel: ObservableObject {
 
     var activeNoteEvent: MIDINoteEvent? {
         noteEvents.first(where: { $0.type == .noteOn && heldNoteNumbers.contains($0.noteNumber) })
+            ?? currentSongNoteEvent
             ?? noteEvents.first(where: { $0.type == .noteOn })
+    }
+
+    private var currentSongNoteEvent: MIDINoteEvent? {
+        guard !activeSongNotes.isEmpty else { return nil }
+        let preferredNumber = latestSongNoteNumber.flatMap { activeSongNotes.contains($0) ? $0 : nil }
+            ?? activeSongNotes.sorted().last
+        guard let preferredNumber else { return nil }
+        return noteEvents.first {
+            $0.type == .noteOn && $0.source == .song && $0.noteNumber == preferredNumber
+        }
     }
 
     var inputSourceLabel: String {
@@ -477,6 +488,15 @@ final class MainViewModel: ObservableObject {
         activeSongNoteCounts[note.noteNumber, default: 0] += 1
         activeSongNotes.insert(note.noteNumber)
         latestSongNoteNumber = note.noteNumber
+        let event = MIDINoteEvent(
+            id: note.id,
+            noteNumber: note.noteNumber,
+            velocity: note.velocity,
+            type: .noteOn,
+            source: .song
+        )
+        noteEvents.insert(event, at: 0)
+        noteEvents = Array(noteEvents.prefix(40))
         if audioEnabled && songOutputRoute == .appOnly {
             audio.play(
                 noteNumber: note.noteNumber,
