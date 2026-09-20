@@ -52,7 +52,7 @@ struct PracticeRootView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     StatusCapsule(
                         text: viewModel.overallConnectionLabel,
-                        connected: viewModel.bleStatus.isConnected || !viewModel.wiredSources.isEmpty
+                        connected: viewModel.hasExternalMIDIConnection
                     )
                 }
             }

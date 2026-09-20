@@ -15,28 +15,29 @@ enum StandardMIDIFileParser {
         guard format == 0 || format == 1 else {
             throw MIDIParseError.invalid("Only MIDI format 0 and 1 are supported")
         }
+        guard format != 0 || trackCount == 1 else {
+            throw MIDIParseError.invalid("MIDI format 0 must contain exactly one track")
+        }
+        guard division > 0 else { throw MIDIParseError.invalid("MIDI time division must be positive") }
         guard trackCount > 0 else { throw MIDIParseError.invalid("MIDI file has no tracks") }
         guard division & 0x8000 == 0 else {
             throw MIDIParseError.invalid("SMPTE time division is not supported")
         }
 
         var tracks: [ParsedTrack] = []
-        for _ in 0..<trackCount {
-            tracks.append(try parseTrack(reader: &reader))
+        for trackIndex in 0..<trackCount {
+            tracks.append(try parseTrack(reader: &reader, trackIndex: trackIndex))
         }
 
         let events = tracks.flatMap(\.events).sorted {
-            ($0.tick, $0.order) < ($1.tick, $1.order)
+            ($0.tick, $0.trackIndex, $0.order) < ($1.tick, $1.trackIndex, $1.order)
         }
-        let firstTempo = tracks.compactMap(\.tempo).first ?? 500_000
-        let tempoChanges = normalizeTempoChanges(
-            tracks.flatMap(\.tempoChanges),
-            initialTempo: firstTempo
-        )
+        let tempoChanges = normalizeTempoChanges(tracks.flatMap(\.tempoChanges))
+        let firstTempo = tempoChanges[0].microsecondsPerQuarter
         let notes = buildNotes(
             events: events,
             tempoChanges: tempoChanges,
-            ticksPerQuarter: max(1, division)
+            ticksPerQuarter: division
         )
         guard !notes.isEmpty else {
             throw MIDIParseError.invalid("No playable piano notes were found")
@@ -54,15 +55,16 @@ enum StandardMIDIFileParser {
         )
     }
 
-    private static func parseTrack(reader: inout MIDIReader) throws -> ParsedTrack {
-        try reader.expectASCII("MTrk")
-        let length = try reader.readInt()
-        let end = reader.position + length
+    private static func parseTrack(reader fileReader: inout MIDIReader, trackIndex: Int) throws -> ParsedTrack {
+        try fileReader.expectASCII("MTrk")
+        let length = try fileReader.readInt()
+        // A bounded reader prevents malformed events from consuming the next track.
+        var reader = MIDIReader(data: try fileReader.readBytes(length))
+        let end = reader.data.count
         var tick: Int64 = 0
         var runningStatus: UInt8?
         var order = 0
         var title: String?
-        var tempo: Int?
         var timeSignature: String?
         var tempoChanges: [TempoChange] = []
         var events: [TimedEvent] = []
@@ -82,37 +84,45 @@ enum StandardMIDIFileParser {
 
             switch status {
             case 0xFF:
+                runningStatus = nil
                 let type = try reader.readByte()
                 let count = Int(try reader.readVariableLengthQuantity())
                 let payload = try reader.readBytes(count)
                 switch type {
-                case 0x00, 0x03:
+                case 0x03:
                     if title == nil {
                         title = String(data: payload, encoding: .isoLatin1)?
                             .trimmingCharacters(in: .whitespacesAndNewlines)
                     }
-                case 0x51 where payload.count >= 3:
+                case 0x51:
+                    guard payload.count == 3 else { throw MIDIParseError.invalid("Invalid tempo event") }
                     let value = Int(payload[0]) << 16 | Int(payload[1]) << 8 | Int(payload[2])
-                    if value > 0 {
-                        tempo = tempo ?? value
-                        tempoChanges.append(.init(tick: tick, microsecondsPerQuarter: value))
+                    guard value > 0 else { throw MIDIParseError.invalid("MIDI tempo must be positive") }
+                    tempoChanges.append(.init(tick: tick, microsecondsPerQuarter: value))
+                case 0x58:
+                    guard payload.count == 4, payload[0] > 0, payload[1] <= 7 else {
+                        throw MIDIParseError.invalid("Invalid time signature")
                     }
-                case 0x58 where payload.count >= 2:
                     timeSignature = "\(payload[0])/\(1 << Int(payload[1]))"
                 default:
                     break
                 }
                 if type == 0x2F { break }
             case 0xF0, 0xF7:
+                runningStatus = nil
                 try reader.skip(Int(try reader.readVariableLengthQuantity()))
             case 0x80...0xEF:
                 let command = status & 0xF0
                 let channel = status & 0x0F
                 let data1 = try reader.readByte()
                 let data2: UInt8 = command == 0xC0 || command == 0xD0 ? 0 : try reader.readByte()
+                guard data1 < 0x80, data2 < 0x80 else {
+                    throw MIDIParseError.invalid("Invalid MIDI data byte")
+                }
                 if command == 0x80 || command == 0x90 {
                     events.append(.init(
                         tick: tick,
+                        trackIndex: trackIndex,
                         order: order,
                         noteNumber: Int(data1),
                         velocity: Int(data2),
@@ -128,7 +138,6 @@ enum StandardMIDIFileParser {
         try reader.move(to: end)
         return ParsedTrack(
             title: title,
-            tempo: tempo,
             timeSignature: timeSignature,
             tempoChanges: tempoChanges,
             events: events
@@ -140,22 +149,14 @@ enum StandardMIDIFileParser {
         tempoChanges: [TempoChange],
         ticksPerQuarter: Int
     ) -> [SongNote] {
-        struct NoteKey: Hashable { let channel: Int; let note: Int }
+        struct NoteKey: Hashable { let track: Int; let channel: Int; let note: Int }
         var active: [NoteKey: [TimedEvent]] = [:]
         var notes: [SongNote] = []
 
         for event in events where event.channel != 9 && (21...108).contains(event.noteNumber) {
-            let key = NoteKey(channel: event.channel, note: event.noteNumber)
+            let key = NoteKey(track: event.trackIndex, channel: event.channel, note: event.noteNumber)
             if event.isOn {
-                if let previous = active[key]?.first {
-                    notes.append(makeSongNote(
-                        start: previous,
-                        endTick: event.tick,
-                        tempoChanges: tempoChanges,
-                        ticksPerQuarter: ticksPerQuarter
-                    ))
-                    active[key]?.removeFirst()
-                }
+                // Pair overlapping same-pitch notes FIFO within their own track/channel.
                 active[key, default: []].append(event)
             } else if let started = active[key]?.first {
                 notes.append(makeSongNote(
@@ -180,12 +181,11 @@ enum StandardMIDIFileParser {
     ) -> SongNote {
         let startMilliseconds = tickToMilliseconds(start.tick, tempoChanges, ticksPerQuarter)
         let endMilliseconds = tickToMilliseconds(endTick, tempoChanges, ticksPerQuarter)
-        let rawDuration = max(60, endMilliseconds - startMilliseconds)
-        let naturalTail: Int64 = rawDuration < 220 ? 120 : 80
-        let minimum: Int64 = start.noteNumber < 60 ? 260 : 180
+        // Preserve MIDI timing. The audio engine owns the acoustic release tail.
+        let rawDuration = max(1, endMilliseconds - startMilliseconds)
         return SongNote(
             startMilliseconds: startMilliseconds,
-            durationMilliseconds: max(minimum, rawDuration + naturalTail),
+            durationMilliseconds: rawDuration,
             noteNumber: start.noteNumber,
             velocity: start.velocity.clamped(to: 1...127),
             hand: start.noteNumber < 60 ? .left : .right
@@ -193,14 +193,14 @@ enum StandardMIDIFileParser {
     }
 
     private static func normalizeTempoChanges(
-        _ changes: [TempoChange],
-        initialTempo: Int
+        _ changes: [TempoChange]
     ) -> [TempoChange] {
         var values: [Int64: Int] = [:]
         for change in changes.sorted(by: { $0.tick < $1.tick }) {
             values[change.tick] = change.microsecondsPerQuarter
         }
-        values[0] = values[0] ?? initialTempo
+        // MIDI defaults to 120 BPM until an actual tempo event takes effect.
+        values[0] = values[0] ?? 500_000
         return values.map { .init(tick: $0.key, microsecondsPerQuarter: $0.value) }
             .sorted { $0.tick < $1.tick }
     }
@@ -225,7 +225,6 @@ enum StandardMIDIFileParser {
 
 private struct ParsedTrack {
     let title: String?
-    let tempo: Int?
     let timeSignature: String?
     let tempoChanges: [TempoChange]
     let events: [TimedEvent]
@@ -238,6 +237,7 @@ private struct TempoChange {
 
 private struct TimedEvent {
     let tick: Int64
+    let trackIndex: Int
     let order: Int
     let noteNumber: Int
     let velocity: Int

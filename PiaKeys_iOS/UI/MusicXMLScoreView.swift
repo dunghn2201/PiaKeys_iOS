@@ -28,6 +28,7 @@ struct MusicXMLScoreView: UIViewRepresentable {
         if context.coordinator.scoreURL != url {
             context.coordinator.scoreURL = url
             context.coordinator.pageLoaded = false
+            context.coordinator.renderedURL = nil
             loadPage(in: webView)
         } else if context.coordinator.pageLoaded {
             context.coordinator.renderScoreIfNeeded()

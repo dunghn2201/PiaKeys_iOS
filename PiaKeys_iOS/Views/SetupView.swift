@@ -1,3 +1,4 @@
+import CoreAudioKit
 import SwiftUI
 
 struct SetupView: View {
@@ -5,6 +6,8 @@ struct SetupView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var scanTapSequence = 0
     @State private var scanTapFeedback = false
+    @State private var showBluetoothMIDIPicker = false
+    @State private var showLegal = false
 
     private var copy: LocalizedCopy { .init(language: viewModel.language) }
 
@@ -62,6 +65,14 @@ struct SetupView: View {
                     .sensoryFeedback(.impact(weight: .medium), trigger: scanTapSequence)
                     Spacer()
                 }
+
+                Button {
+                    showBluetoothMIDIPicker = true
+                } label: {
+                    Label("Open iOS Bluetooth MIDI", systemImage: "pianokeys")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
 
                 if viewModel.bleStatus.isUnavailable {
                     Label {
@@ -124,7 +135,7 @@ struct SetupView: View {
                             Spacer()
                             Button("Connect") { viewModel.connectBLE(device.id) }
                                 .buttonStyle(.bordered)
-                                .disabled(viewModel.bleStatus.isConnected || viewModel.bleStatus.isBusy)
+                                .disabled(viewModel.bleStatus.isConnected || viewModel.bleStatus.isConnectionInProgress)
                         }
                         .padding(.vertical, 4)
                         if device.id != viewModel.bleDevices.last?.id { Divider() }
@@ -141,6 +152,9 @@ struct SetupView: View {
             }
         }
         .frame(maxWidth: .infinity)
+        .sheet(isPresented: $showBluetoothMIDIPicker, onDismiss: viewModel.refreshWiredMIDI) {
+            BluetoothMIDIPickerView()
+        }
     }
 
     private var wiredCard: some View {
@@ -206,7 +220,19 @@ struct SetupView: View {
                     ForEach(PiaKeysLanguage.allCases) { language in Text(language.rawValue).tag(language) }
                 }
                 .pickerStyle(.menu)
+
+                Divider()
+                Button {
+                    showLegal = true
+                } label: {
+                    Label("Privacy & licenses", systemImage: "doc.text.magnifyingglass")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.bordered)
             }
+        }
+        .sheet(isPresented: $showLegal) {
+            LegalView()
         }
     }
 
@@ -215,7 +241,7 @@ struct SetupView: View {
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: 8) {
                     if viewModel.rawPackets.isEmpty {
-                        Text("Raw BLE MIDI packets appear here.")
+                        Text("Raw MIDI packets appear here.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -233,7 +259,7 @@ struct SetupView: View {
                 }
                 .padding(.top, 10)
             } label: {
-                SectionTitle(title: copy.diagnostics, subtitle: "BLE MIDI packet log", symbol: "waveform.badge.magnifyingglass")
+                SectionTitle(title: copy.diagnostics, subtitle: "Core MIDI packet log", symbol: "waveform.badge.magnifyingglass")
             }
         }
     }
@@ -245,6 +271,14 @@ struct SetupView: View {
         default: "wifi.exclamationmark"
         }
     }
+}
+
+private struct BluetoothMIDIPickerView: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> CABTMIDICentralViewController {
+        CABTMIDICentralViewController()
+    }
+
+    func updateUIViewController(_ uiViewController: CABTMIDICentralViewController, context: Context) {}
 }
 
 private struct MIDIPortRow: View {

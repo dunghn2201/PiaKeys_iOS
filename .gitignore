@@ -3,3 +3,5 @@
 # Xcode user-specific files
 xcuserdata/
 *.xcuserstate
+docs
+.idea

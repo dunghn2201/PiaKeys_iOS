@@ -251,7 +251,8 @@ struct PracticeDashboardView: View {
                     activeNotes: combinedActiveNotes,
                     height: viewModel.showFullKeyboard ? 112 : 175,
                     fitToWidth: viewModel.showFullKeyboard,
-                    onNotePlayed: viewModel.previewNote
+                    onNoteOn: viewModel.beginPreviewNote,
+                    onNoteOff: viewModel.endPreviewNote
                 )
             }
         }
@@ -350,7 +351,8 @@ private struct FullKeyboardView: View {
                         lastNote: 64,
                         height: rowHeight,
                         fitToWidth: true,
-                        onNotePlayed: viewModel.previewNote
+                        onNoteOn: viewModel.beginPreviewNote,
+                        onNoteOff: viewModel.endPreviewNote
                     )
                     PianoKeyboardView(
                         activeNotes: viewModel.heldNoteNumbers.union(viewModel.activeSongNotes),
@@ -358,7 +360,8 @@ private struct FullKeyboardView: View {
                         lastNote: 108,
                         height: rowHeight,
                         fitToWidth: true,
-                        onNotePlayed: viewModel.previewNote
+                        onNoteOn: viewModel.beginPreviewNote,
+                        onNoteOff: viewModel.endPreviewNote
                     )
                 }
                 .padding()

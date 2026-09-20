@@ -19,6 +19,7 @@ final class PianoAudioEngine {
         var isBusy = false
         var sequence: UInt64 = 0
         var fullVolume: Float = 1
+        var noteID: UUID?
 
         init(player: AVAudioPlayerNode, varispeed: AVAudioUnitVarispeed) {
             self.player = player
@@ -71,12 +72,13 @@ final class PianoAudioEngine {
         }
     }
 
-    func play(noteNumber: Int, velocity: Int, durationMilliseconds: Int64? = nil) {
+    func play(noteNumber: Int, velocity: Int, durationMilliseconds: Int64? = nil, voiceID: UUID? = nil) {
         audioQueue.async { [self] in
             playNow(
                 noteNumber: noteNumber,
                 velocity: velocity,
-                durationMilliseconds: durationMilliseconds
+                durationMilliseconds: durationMilliseconds,
+                voiceID: voiceID
             )
         }
     }
@@ -90,14 +92,14 @@ final class PianoAudioEngine {
         }
     }
 
-    private func playNow(noteNumber: Int, velocity: Int, durationMilliseconds: Int64?) {
+    private func playNow(noteNumber: Int, velocity: Int, durationMilliseconds: Int64?, voiceID: UUID? = nil) {
         prepareEngine()
         if let sample = closestSample(to: noteNumber, velocity: velocity),
            let buffer = sampleBuffer(for: sample) {
-            play(buffer: buffer, sampleNote: sample.noteNumber, noteNumber: noteNumber, velocity: velocity, durationMilliseconds: durationMilliseconds)
+            play(buffer: buffer, sampleNote: sample.noteNumber, noteNumber: noteNumber, velocity: velocity, durationMilliseconds: durationMilliseconds, voiceID: voiceID)
         } else {
             Self.logger.error("Falling back to synthesized note \(noteNumber); no readable FLAC sample")
-            playSynthesizedNote(noteNumber: noteNumber, velocity: velocity, durationMilliseconds: durationMilliseconds ?? 500)
+            playSynthesizedNote(noteNumber: noteNumber, velocity: velocity, durationMilliseconds: durationMilliseconds ?? 2_400, voiceID: voiceID)
         }
     }
 
@@ -109,12 +111,34 @@ final class PianoAudioEngine {
         }
     }
 
+    /// Releases only the voice belonging to this input event, not every voice
+    /// sharing its pitch (song playback and other MIDI inputs may overlap).
+    func releaseNote(_ id: UUID) {
+        audioQueue.async { [self] in
+            for voice in voices where voice.isBusy && voice.noteID == id {
+                voice.noteID = nil
+                scheduleRelease(voice, generation: voice.generation, after: Self.releaseMilliseconds)
+            }
+        }
+    }
+
+    func stopNotes(_ ids: Set<UUID>) {
+        audioQueue.async { [self] in
+            for voice in voices where voice.noteID.map(ids.contains) == true {
+                voice.generation += 1
+                releaseVoice(voice, generation: voice.generation)
+            }
+        }
+    }
+
     func stopAll() {
         audioQueue.async { [self] in
             for voice in voices {
                 voice.generation += 1
                 voice.player.stop()
                 voice.isBusy = false
+                voice.noteID = nil
+                voice.audioBuffer = nil
             }
         }
     }
@@ -151,6 +175,9 @@ final class PianoAudioEngine {
     private func prepareEngine() {
         guard !engine.isRunning else { return }
         do {
+#if os(iOS) || os(visionOS)
+            try AVAudioSession.sharedInstance().setActive(true)
+#endif
             try engine.start()
         } catch {
             Self.logger.error("Unable to start audio engine: \(error.localizedDescription)")
@@ -162,16 +189,18 @@ final class PianoAudioEngine {
         sampleNote: Int,
         noteNumber: Int,
         velocity: Int,
-        durationMilliseconds: Int64?
+        durationMilliseconds: Int64?,
+        voiceID: UUID?
     ) {
         let voice = acquireVoice()
         let generation = voice.generation
+        voice.noteID = voiceID
         voice.audioBuffer = buffer
         voice.varispeed.rate = Float(pow(2, Double(noteNumber - sampleNote) / 12))
         // Keep the same headroom as the Android SFZ renderer.
         voice.fullVolume = Float(velocity.clamped(to: 1...127)) / 127 * 0.72
         voice.player.volume = voice.fullVolume
-        voice.player.scheduleBuffer(buffer, at: nil, options: []) { [weak self, weak voice] in
+        voice.player.scheduleBuffer(buffer, at: nil, options: [], completionCallbackType: .dataPlayedBack) { [weak self, weak voice] _ in
             guard let self, let voice else { return }
             self.audioQueue.async {
                 self.releaseVoice(voice, generation: generation)
@@ -180,25 +209,27 @@ final class PianoAudioEngine {
         voice.player.play()
 
         // Keep long score notes intact, then damp them gradually like a released piano key.
-        let heldMilliseconds = (durationMilliseconds ?? 1_100).clamped(to: 80...7_500)
-        scheduleRelease(
-            voice,
-            generation: generation,
-            after: heldMilliseconds + Self.releaseMilliseconds
-        )
+        if let durationMilliseconds {
+            scheduleRelease(
+                voice,
+                generation: generation,
+                after: max(1, durationMilliseconds) + Self.releaseMilliseconds
+            )
+        }
     }
 
-    private func playSynthesizedNote(noteNumber: Int, velocity: Int, durationMilliseconds: Int64) {
+    private func playSynthesizedNote(noteNumber: Int, velocity: Int, durationMilliseconds: Int64, voiceID: UUID?) {
         let frequency = 440 * pow(2, Double(noteNumber - 69) / 12)
         playTone(
             frequency: frequency,
             amplitude: Double(velocity.clamped(to: 1...127)) / 127 * 0.22,
             duration: Double(durationMilliseconds.clamped(to: 100...2_400)) / 1_000,
-            harmonics: 4
+            harmonics: 4,
+            voiceID: voiceID
         )
     }
 
-    private func playTone(frequency: Double, amplitude: Double, duration: Double, harmonics: Int) {
+    private func playTone(frequency: Double, amplitude: Double, duration: Double, harmonics: Int, voiceID: UUID? = nil) {
         let sampleRate = 44_100.0
         let frameCount = AVAudioFrameCount(sampleRate * duration)
         let format = Self.renderFormat
@@ -222,10 +253,11 @@ final class PianoAudioEngine {
         let voice = acquireVoice()
         let generation = voice.generation
         voice.audioBuffer = buffer
+        voice.noteID = voiceID
         voice.varispeed.rate = 1
         voice.fullVolume = 1
         voice.player.volume = 1
-        voice.player.scheduleBuffer(buffer, at: nil, options: []) { [weak self, weak voice] in
+        voice.player.scheduleBuffer(buffer, at: nil, options: [], completionCallbackType: .dataPlayedBack) { [weak self, weak voice] _ in
             guard let self, let voice else { return }
             self.audioQueue.async {
                 self.releaseVoice(voice, generation: generation)
@@ -240,6 +272,7 @@ final class PianoAudioEngine {
         let voice = idleVoice ?? voices.min(by: { $0.sequence < $1.sequence })!
         voice.player.stop()
         voice.audioBuffer = nil
+        voice.noteID = nil
         voice.generation += 1
         voiceSequence &+= 1
         voice.sequence = voiceSequence
@@ -253,6 +286,7 @@ final class PianoAudioEngine {
         voice.player.volume = 0
         voice.audioBuffer = nil
         voice.isBusy = false
+        voice.noteID = nil
     }
 
     private func scheduleRelease(_ voice: Voice, generation: Int, after milliseconds: Int64) {

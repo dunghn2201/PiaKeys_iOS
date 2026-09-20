@@ -6,7 +6,8 @@ struct PianoKeyboardView: View {
     var lastNote = 108
     var height: CGFloat = 170
     var fitToWidth = false
-    let onNotePlayed: (Int, Int64) -> Void
+    let onNoteOn: (Int) -> Void
+    let onNoteOff: (Int) -> Void
 
     private var notes: [Int] { Array(firstNote...lastNote) }
     private var whiteNotes: [Int] { notes.filter { !$0.isBlackPianoKey } }
@@ -38,10 +39,10 @@ struct PianoKeyboardView: View {
                     note: note,
                     active: activeNotes.contains(note),
                     isBlack: false,
-                    showsLabel: showsLabels
-                ) { duration in
-                    onNotePlayed(note, duration)
-                }
+                    showsLabel: showsLabels,
+                    onPressed: { onNoteOn(note) },
+                    onReleased: { onNoteOff(note) }
+                )
                 .frame(width: whiteKeyWidth - 1, height: height)
                 .offset(x: CGFloat(index) * whiteKeyWidth)
             }
@@ -52,10 +53,10 @@ struct PianoKeyboardView: View {
                     note: note,
                     active: activeNotes.contains(note),
                     isBlack: true,
-                    showsLabel: showsLabels
-                ) { duration in
-                    onNotePlayed(note, duration)
-                }
+                    showsLabel: showsLabels,
+                    onPressed: { onNoteOn(note) },
+                    onReleased: { onNoteOff(note) }
+                )
                 .frame(width: max(4, whiteKeyWidth * 0.62), height: height * 0.62)
                 .offset(x: CGFloat(precedingWhiteCount) * whiteKeyWidth - whiteKeyWidth * 0.31)
                 .zIndex(2)
@@ -71,10 +72,11 @@ private struct PianoKeyTouchView: View {
     let active: Bool
     let isBlack: Bool
     let showsLabel: Bool
-    let onReleased: (Int64) -> Void
+    let onPressed: () -> Void
+    let onReleased: () -> Void
 
     @State private var pressed = false
-    @State private var startedAt: ContinuousClock.Instant?
+    @GestureState private var touchActive = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -105,22 +107,29 @@ private struct PianoKeyTouchView: View {
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 0)
+                .updating($touchActive) { _, active, _ in active = true }
                 .onChanged { _ in
                     guard !pressed else { return }
                     pressed = true
-                    startedAt = ContinuousClock().now
+                    onPressed()
                 }
                 .onEnded { _ in
-                    let duration: Int64 = startedAt.map {
-                        let components = $0.duration(to: ContinuousClock().now).components
-                        return Int64(components.seconds * 1_000) +
-                            Int64(components.attoseconds / 1_000_000_000_000_000)
-                    } ?? 180
+                    guard pressed else { return }
                     pressed = false
-                    startedAt = nil
-                    onReleased(max(80, duration))
+                    onReleased()
                 }
         )
+        .onChange(of: touchActive) { _, active in
+            // A parent scroll gesture can cancel this touch without onEnded.
+            if !active && pressed { pressed = false; onReleased() }
+        }
+        .onDisappear {
+            if pressed { pressed = false; onReleased() }
+        }
+        .accessibilityAction {
+            onPressed()
+            onReleased()
+        }
         .accessibilityLabel(note.noteName)
         .accessibilityAddTraits(active ? .isSelected : [])
     }

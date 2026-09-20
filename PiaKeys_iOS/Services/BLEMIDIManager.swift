@@ -1,5 +1,6 @@
 import Combine
 import CoreBluetooth
+import CoreMIDI
 import Foundation
 import OSLog
 
@@ -10,21 +11,28 @@ final class BLEMIDIManager: NSObject, ObservableObject {
     private static let logger = Logger(subsystem: "dunghn2201.PiaKeys-iOS", category: "BLEMIDI")
 
     @Published private(set) var devices: [MIDIDevice] = []
-    @Published private(set) var status: MIDIConnectionStatus = .idle
-    @Published private(set) var rawPackets: [RawMIDIPacket] = []
+    @Published private(set) var status: MIDIConnectionStatus = .idle {
+        didSet {
+#if DEBUG
+            let message = "\(Date())\n\(status)\ncharacteristic=\(String(describing: midiCharacteristic))\nperipheral=\(String(describing: connectedPeripheral))\n"
+            if let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+                try? message.write(to: directory.appendingPathComponent("ble-diagnostic.txt"), atomically: true, encoding: .utf8)
+            }
+#endif
+        }
+    }
     @Published private(set) var compatibilityScanActive = false
-
-    var onEvents: (([MIDINoteEvent]) -> Void)?
 
     private var centralManager: CBCentralManager!
     private var peripherals: [UUID: CBPeripheral] = [:]
     private var connectedPeripheral: CBPeripheral?
     private var midiCharacteristic: CBCharacteristic?
+    private var coreMIDIPeripheralID: UUID?
     private var scanRequested = false
-    private var intentionallyDisconnecting = false
     private var scanStopWorkItem: DispatchWorkItem?
     private var compatibilityScanWorkItem: DispatchWorkItem?
     private var connectionTimeoutWorkItem: DispatchWorkItem?
+    private var coreMIDIRegistrationWorkItems: [DispatchWorkItem] = []
 
     override init() {
         super.init()
@@ -36,9 +44,23 @@ final class BLEMIDIManager: NSObject, ObservableObject {
     }
 
     var canSendNotes: Bool {
-        guard status.canSend, let midiCharacteristic else { return false }
+        guard status.canSend else { return false }
+        if coreMIDIPeripheralID != nil { return true }
+        guard let midiCharacteristic else { return false }
         return midiCharacteristic.properties.contains(.write) ||
             midiCharacteristic.properties.contains(.writeWithoutResponse)
+    }
+
+    var canSendDirectNotes: Bool {
+        guard status.canSend, coreMIDIPeripheralID == nil,
+              connectedPeripheral != nil, let midiCharacteristic else { return false }
+        return midiCharacteristic.properties.contains(.write) ||
+            midiCharacteristic.properties.contains(.writeWithoutResponse)
+    }
+
+    var connectedDeviceName: String? {
+        guard case let .connected(name, _) = status else { return nil }
+        return name
     }
 
     func startScan() {
@@ -68,9 +90,20 @@ final class BLEMIDIManager: NSObject, ObservableObject {
             return
         }
 
+        guard peripheral.state != .disconnecting,
+              connectedPeripheral?.identifier != peripheral.identifier,
+              coreMIDIPeripheralID != peripheral.identifier else { return }
         scanRequested = false
         stopScanHardware()
         cancelConnectionTimeout()
+        cancelCoreMIDIRegistrationChecks()
+        if let coreMIDIPeripheralID {
+            disconnectCoreMIDI(peripheralID: coreMIDIPeripheralID)
+            self.coreMIDIPeripheralID = nil
+        }
+        if let previous = connectedPeripheral {
+            centralManager.cancelPeripheralConnection(previous)
+        }
         connectedPeripheral = peripheral
         midiCharacteristic = nil
         peripheral.delegate = self
@@ -91,34 +124,54 @@ final class BLEMIDIManager: NSObject, ObservableObject {
         scanRequested = false
         stopScanHardware()
         cancelConnectionTimeout()
+        cancelCoreMIDIRegistrationChecks()
         midiCharacteristic = nil
+
+        if let coreMIDIPeripheralID {
+            disconnectCoreMIDI(peripheralID: coreMIDIPeripheralID)
+            self.coreMIDIPeripheralID = nil
+            connectedPeripheral = nil
+            status = .idle
+            return
+        }
 
         guard let peripheral = connectedPeripheral else {
             status = .idle
             return
         }
-        intentionallyDisconnecting = true
         connectedPeripheral = nil
         centralManager.cancelPeripheralConnection(peripheral)
         status = .idle
     }
 
     func sendNoteOn(_ noteNumber: Int, velocity: Int, channel: Int = 0) {
-        writeMIDI(status: 0x90 | UInt8(channel.clamped(to: 0...15)), note: noteNumber, velocity: velocity)
+        writeMIDI(
+            status: 0x90 | UInt8(channel.clamped(to: 0...15)),
+            note: noteNumber,
+            velocity: velocity
+        )
     }
 
     func sendNoteOff(_ noteNumber: Int, channel: Int = 0) {
-        writeMIDI(status: 0x80 | UInt8(channel.clamped(to: 0...15)), note: noteNumber, velocity: 0)
+        writeMIDI(
+            status: 0x80 | UInt8(channel.clamped(to: 0...15)),
+            note: noteNumber,
+            velocity: 0
+        )
     }
 
     private func beginScan() {
         guard scanRequested, centralManager.state == .poweredOn else { return }
         stopScanHardware()
         cancelConnectionTimeout()
+        cancelCoreMIDIRegistrationChecks()
 
         if let peripheral = connectedPeripheral {
-            intentionallyDisconnecting = true
             centralManager.cancelPeripheralConnection(peripheral)
+        }
+        if let coreMIDIPeripheralID {
+            disconnectCoreMIDI(peripheralID: coreMIDIPeripheralID)
+            self.coreMIDIPeripheralID = nil
         }
         connectedPeripheral = nil
         midiCharacteristic = nil
@@ -194,11 +247,139 @@ final class BLEMIDIManager: NSObject, ObservableObject {
         connectionTimeoutWorkItem = nil
     }
 
+    private func cancelCoreMIDIRegistrationChecks() {
+        coreMIDIRegistrationWorkItems.forEach { $0.cancel() }
+        coreMIDIRegistrationWorkItems.removeAll()
+    }
+
     private func fail(_ message: String, cancel peripheral: CBPeripheral? = nil) {
         cancelConnectionTimeout()
+        cancelCoreMIDIRegistrationChecks()
+        if let coreMIDIPeripheralID {
+            disconnectCoreMIDI(peripheralID: coreMIDIPeripheralID)
+            self.coreMIDIPeripheralID = nil
+        }
         status = .failed(message)
         Self.logger.error("\(message, privacy: .public)")
-        if let peripheral { centralManager.cancelPeripheralConnection(peripheral) }
+        if let peripheral {
+            connectedPeripheral = nil
+            midiCharacteristic = nil
+            centralManager.cancelPeripheralConnection(peripheral)
+        }
+    }
+
+    /// Transfers the active CoreBluetooth connection to Apple's BLE MIDI driver.
+    ///
+    /// Core MIDI owns notification subscription after this handoff. Calling
+    /// `setNotifyValue` from the app can fail with `attributeNotFound` on valid
+    /// BLE MIDI peripherals because their CCCD is managed by the system driver.
+    private func activateCoreMIDI(for peripheral: CBPeripheral, characteristic: CBCharacteristic) {
+        let result = MIDIBluetoothDriverActivateAllConnections()
+        guard result == noErr else {
+            if characteristic.supportsMIDIWrite {
+                activateDirectOutput(for: peripheral, characteristic: characteristic)
+                Self.logger.error("Core MIDI handoff failed with \(result); using direct BLE MIDI output")
+                return
+            }
+            fail(
+                "iOS could not register this BLE MIDI piano with Core MIDI (error \(result)). Disconnect it from other MIDI apps, then try again.",
+                cancel: peripheral
+            )
+            return
+        }
+
+        midiCharacteristic = characteristic
+        let name = displayName(for: peripheral)
+        status = .enablingNotifications(name)
+        scheduleCoreMIDIRegistrationChecks(for: peripheral, characteristic: characteristic, name: name)
+        Self.logger.info("Waiting for Core MIDI to register destination for \(name, privacy: .public)")
+    }
+
+    /// Core MIDI claims BLE links asynchronously. Keep CoreBluetooth alive until
+    /// the matching output endpoint actually exists; otherwise cancelling here
+    /// can leave the app with an input source but no usable piano destination.
+    private func scheduleCoreMIDIRegistrationChecks(
+        for peripheral: CBPeripheral,
+        characteristic: CBCharacteristic,
+        name: String
+    ) {
+        cancelCoreMIDIRegistrationChecks()
+        let delays: [TimeInterval] = [0.1, 0.3, 0.75, 1.5, 2.5]
+        for (index, delay) in delays.enumerated() {
+            let work = DispatchWorkItem { [weak self, weak peripheral] in
+                guard let self, let peripheral,
+                      self.connectedPeripheral?.identifier == peripheral.identifier else { return }
+                if self.hasCoreMIDIDestination(matching: name) {
+                    self.finishCoreMIDIHandoff(for: peripheral, name: name)
+                } else if index == delays.indices.last {
+                    if characteristic.supportsMIDIWrite {
+                        self.activateDirectOutput(for: peripheral, characteristic: characteristic)
+                        Self.logger.notice("Core MIDI destination did not appear; using direct BLE MIDI output")
+                    } else {
+                        self.fail("iOS registered no MIDI output for this piano.", cancel: peripheral)
+                    }
+                }
+            }
+            coreMIDIRegistrationWorkItems.append(work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        }
+    }
+
+    private func finishCoreMIDIHandoff(for peripheral: CBPeripheral, name: String) {
+        cancelCoreMIDIRegistrationChecks()
+        cancelConnectionTimeout()
+        coreMIDIPeripheralID = peripheral.identifier
+        status = .connected(name, canSend: true)
+        Self.logger.info("BLE MIDI connection handed to a confirmed Core MIDI destination")
+
+        connectedPeripheral = nil
+        midiCharacteristic = nil
+        peripheral.delegate = nil
+        centralManager.cancelPeripheralConnection(peripheral)
+    }
+
+    private func hasCoreMIDIDestination(matching peripheralName: String) -> Bool {
+        let candidates = [peripheralName, "BLE MIDI", "Bluetooth MIDI"]
+            .map(Self.normalizedMIDIName)
+            .filter { !$0.isEmpty }
+        return (0..<MIDIGetNumberOfDestinations()).contains { index in
+            let endpoint = MIDIGetDestination(index)
+            guard endpoint != 0 else { return false }
+            var value: Unmanaged<CFString>?
+            guard MIDIObjectGetStringProperty(endpoint, kMIDIPropertyDisplayName, &value) == noErr ||
+                    MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &value) == noErr,
+                  let value else { return false }
+            let endpointName = Self.normalizedMIDIName(value.takeRetainedValue() as String)
+            return candidates.contains { endpointName == $0 || endpointName.contains($0) || $0.contains(endpointName) }
+        }
+    }
+
+    private static func normalizedMIDIName(_ name: String) -> String {
+        name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .filter { $0.isLetter || $0.isNumber }
+    }
+
+    /// Keeps the CoreBluetooth link for MIDI output when the peripheral does
+    /// not expose a notification descriptor or Core MIDI cannot claim it.
+    private func activateDirectOutput(for peripheral: CBPeripheral, characteristic: CBCharacteristic) {
+        guard characteristic.supportsMIDIWrite else {
+            fail("The BLE MIDI characteristic cannot receive MIDI output.", cancel: peripheral)
+            return
+        }
+        midiCharacteristic = characteristic
+        cancelCoreMIDIRegistrationChecks()
+        cancelConnectionTimeout()
+        status = .connected(displayName(for: peripheral), canSend: true)
+        Self.logger.info("BLE MIDI output is using the direct CoreBluetooth fallback")
+    }
+
+    private func disconnectCoreMIDI(peripheralID: UUID) {
+        let result = MIDIBluetoothDriverDisconnect(peripheralID.uuidString as CFString)
+        guard result == noErr else {
+            Self.logger.error("Could not disconnect BLE MIDI driver for \(peripheralID.uuidString, privacy: .public): \(result)")
+            return
+        }
+        Self.logger.info("BLE MIDI driver disconnected")
     }
 
     private var bluetoothUnavailableStatus: MIDIConnectionStatus {
@@ -236,23 +417,6 @@ final class BLEMIDIManager: NSObject, ObservableObject {
         }
     }
 
-    private func writeMIDI(status midiStatus: UInt8, note: Int, velocity: Int) {
-        guard let peripheral = connectedPeripheral, let characteristic = midiCharacteristic else { return }
-        let timestamp = Int(ProcessInfo.processInfo.systemUptime * 1_000) & 0x1FFF
-        let header = UInt8(0x80 | ((timestamp >> 7) & 0x3F))
-        let low = UInt8(0x80 | (timestamp & 0x7F))
-        let data = Data([
-            header,
-            low,
-            midiStatus,
-            UInt8(note.clamped(to: 0...127)),
-            UInt8(velocity.clamped(to: 0...127))
-        ])
-        let writeType: CBCharacteristicWriteType = characteristic.properties.contains(.writeWithoutResponse)
-            ? .withoutResponse
-            : .withResponse
-        peripheral.writeValue(data, for: characteristic, type: writeType)
-    }
 }
 
 extension BLEMIDIManager: CBCentralManagerDelegate {
@@ -271,6 +435,14 @@ extension BLEMIDIManager: CBCentralManagerDelegate {
         } else {
             scanRequested = false
             stopScanHardware()
+            cancelConnectionTimeout()
+            cancelCoreMIDIRegistrationChecks()
+            connectedPeripheral = nil
+            midiCharacteristic = nil
+            if let coreMIDIPeripheralID {
+                disconnectCoreMIDI(peripheralID: coreMIDIPeripheralID)
+                self.coreMIDIPeripheralID = nil
+            }
             status = bluetoothUnavailableStatus
         }
     }
@@ -281,6 +453,7 @@ extension BLEMIDIManager: CBCentralManagerDelegate {
         advertisementData: [String: Any],
         rssi RSSI: NSNumber
     ) {
+        guard scanRequested, status.isScanning else { return }
         let serviceUUIDs = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []) +
             (advertisementData[CBAdvertisementDataOverflowServiceUUIDsKey] as? [CBUUID] ?? [])
         let advertisesMIDI = serviceUUIDs.contains(Self.midiServiceUUID) || !compatibilityScanActive
@@ -300,6 +473,7 @@ extension BLEMIDIManager: CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        guard connectedPeripheral?.identifier == peripheral.identifier else { return }
         let name = displayName(for: peripheral)
         connectedPeripheral = peripheral
         peripheral.delegate = self
@@ -312,6 +486,7 @@ extension BLEMIDIManager: CBCentralManagerDelegate {
         didFailToConnect peripheral: CBPeripheral,
         error: Error?
     ) {
+        guard connectedPeripheral?.identifier == peripheral.identifier else { return }
         connectedPeripheral = nil
         midiCharacteristic = nil
         fail(error?.localizedDescription ?? "Could not connect to the MIDI piano.")
@@ -322,14 +497,12 @@ extension BLEMIDIManager: CBCentralManagerDelegate {
         didDisconnectPeripheral peripheral: CBPeripheral,
         error: Error?
     ) {
+        guard connectedPeripheral?.identifier == peripheral.identifier else { return }
         cancelConnectionTimeout()
         connectedPeripheral = nil
         midiCharacteristic = nil
 
-        if intentionallyDisconnecting {
-            intentionallyDisconnecting = false
-            if !status.isScanning { status = .idle }
-        } else if case .failed = status {
+        if case .failed = status {
             // Keep the useful failure message produced by service discovery.
         } else if let error {
             status = .failed("Disconnected: \(error.localizedDescription)")
@@ -341,6 +514,7 @@ extension BLEMIDIManager: CBCentralManagerDelegate {
 
 extension BLEMIDIManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        guard connectedPeripheral?.identifier == peripheral.identifier else { return }
         if let error {
             fail("Service discovery failed: \(error.localizedDescription)", cancel: peripheral)
             return
@@ -350,7 +524,7 @@ extension BLEMIDIManager: CBPeripheralDelegate {
             return
         }
         status = .discoveringServices(displayName(for: peripheral))
-        peripheral.discoverCharacteristics([Self.midiCharacteristicUUID], for: service)
+        peripheral.discoverCharacteristics(nil, for: service)
     }
 
     func peripheral(
@@ -358,60 +532,57 @@ extension BLEMIDIManager: CBPeripheralDelegate {
         didDiscoverCharacteristicsFor service: CBService,
         error: Error?
     ) {
+        guard connectedPeripheral?.identifier == peripheral.identifier else { return }
         if let error {
             fail("Characteristic discovery failed: \(error.localizedDescription)", cancel: peripheral)
             return
         }
-        guard let characteristic = service.characteristics?.first(where: {
-            $0.uuid == Self.midiCharacteristicUUID
-        }) else {
+        let characteristics = service.characteristics ?? []
+        guard let characteristic = characteristics.first(where: { $0.uuid == Self.midiCharacteristicUUID }) else {
             fail("The BLE MIDI characteristic was not found.", cancel: peripheral)
             return
         }
-        guard characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate) else {
-            fail("The BLE MIDI characteristic does not support notifications.", cancel: peripheral)
+        guard characteristic.supportsMIDINotifications || characteristic.supportsMIDIWrite else {
+            fail("The BLE MIDI characteristic cannot receive or send MIDI.", cancel: peripheral)
             return
         }
-        midiCharacteristic = characteristic
-        status = .enablingNotifications(displayName(for: peripheral))
-        peripheral.setNotifyValue(true, for: characteristic)
+        if characteristic.supportsMIDINotifications {
+            activateCoreMIDI(for: peripheral, characteristic: characteristic)
+        } else {
+            activateDirectOutput(for: peripheral, characteristic: characteristic)
+        }
+    }
+}
+
+private extension CBCharacteristic {
+    var supportsMIDINotifications: Bool {
+        properties.contains(.notify) ||
+            properties.contains(.indicate) ||
+            properties.contains(.notifyEncryptionRequired) ||
+            properties.contains(.indicateEncryptionRequired)
     }
 
-    func peripheral(
-        _ peripheral: CBPeripheral,
-        didUpdateNotificationStateFor characteristic: CBCharacteristic,
-        error: Error?
-    ) {
-        if let error {
-            fail("Could not enable MIDI notifications: \(error.localizedDescription)", cancel: peripheral)
-            return
-        }
-        guard characteristic.isNotifying else {
-            fail("The piano did not enable MIDI notifications.", cancel: peripheral)
-            return
-        }
-        cancelConnectionTimeout()
-        let supportsWrite = characteristic.properties.contains(.write) ||
-            characteristic.properties.contains(.writeWithoutResponse)
-        status = .connected(displayName(for: peripheral), canSend: supportsWrite)
-        Self.logger.info("BLE MIDI notifications are live")
+    var supportsMIDIWrite: Bool {
+        properties.contains(.write) || properties.contains(.writeWithoutResponse)
     }
+}
 
-    func peripheral(
-        _ peripheral: CBPeripheral,
-        didUpdateValueFor characteristic: CBCharacteristic,
-        error: Error?
-    ) {
-        if let error {
-            status = .failed("MIDI notification error: \(error.localizedDescription)")
-            return
-        }
-        guard characteristic.uuid == Self.midiCharacteristicUUID,
-              let value = characteristic.value else { return }
-        let bytes = [UInt8](value)
-        rawPackets.insert(.init(bytes: bytes, timestamp: Date()), at: 0)
-        rawPackets = Array(rawPackets.prefix(40))
-        let events = MIDIMessageDecoder.decodeBLEPacket(bytes)
-        if !events.isEmpty { onEvents?(events) }
+private extension BLEMIDIManager {
+    func writeMIDI(status midiStatus: UInt8, note: Int, velocity: Int) {
+        guard let peripheral = connectedPeripheral, let characteristic = midiCharacteristic,
+              characteristic.supportsMIDIWrite else { return }
+        let timestamp = Int(ProcessInfo.processInfo.systemUptime * 1_000) & 0x1FFF
+        let data = Data([
+            UInt8(0x80 | ((timestamp >> 7) & 0x3F)),
+            UInt8(0x80 | (timestamp & 0x7F)),
+            midiStatus,
+            UInt8(note.clamped(to: 0...127)),
+            UInt8(velocity.clamped(to: 0...127))
+        ])
+        let writeType: CBCharacteristicWriteType = characteristic.properties.contains(.writeWithoutResponse)
+            ? .withoutResponse
+            : .withResponse
+        guard data.count <= peripheral.maximumWriteValueLength(for: writeType) else { return }
+        peripheral.writeValue(data, for: characteristic, type: writeType)
     }
 }

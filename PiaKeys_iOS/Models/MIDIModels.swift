@@ -12,6 +12,8 @@ struct MIDINoteEvent: Identifiable, Hashable, Sendable {
     let type: MIDIEventType
     let timestamp: Date
     let source: MIDIInputSource
+    let channel: Int
+    let sourceID: String?
 
     init(
         id: UUID = UUID(),
@@ -19,7 +21,9 @@ struct MIDINoteEvent: Identifiable, Hashable, Sendable {
         velocity: Int,
         type: MIDIEventType,
         timestamp: Date = Date(),
-        source: MIDIInputSource = .preview
+        source: MIDIInputSource = .preview,
+        channel: Int = 0,
+        sourceID: String? = nil
     ) {
         self.id = id
         self.noteNumber = noteNumber.clamped(to: 0...127)
@@ -27,6 +31,8 @@ struct MIDINoteEvent: Identifiable, Hashable, Sendable {
         self.type = type
         self.timestamp = timestamp
         self.source = source
+        self.channel = channel.clamped(to: 0...15)
+        self.sourceID = sourceID
     }
 
     var noteName: String { noteNumber.noteName }
@@ -99,6 +105,15 @@ enum MIDIConnectionStatus: Equatable, Sendable {
         }
     }
 
+    /// Indicates that a selected device is currently being connected. Scanning
+    /// may continue while a discovered device is already available to connect.
+    var isConnectionInProgress: Bool {
+        switch self {
+        case .connecting, .discoveringServices, .enablingNotifications: true
+        default: false
+        }
+    }
+
     var isUnavailable: Bool {
         if case .unavailable = self { return true }
         return false
@@ -139,21 +154,27 @@ enum PiaKeysLanguage: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
-enum SongHand: Sendable {
+enum SongHand: String, Codable, Sendable {
     case left
     case right
 }
 
-struct SongNote: Identifiable, Hashable, Sendable {
-    let id = UUID()
+struct SongNote: Identifiable, Hashable, Codable, Sendable {
+    var id = UUID()
     let startMilliseconds: Int64
     let durationMilliseconds: Int64
     let noteNumber: Int
     let velocity: Int
     let hand: SongHand
+
+    /// Remaining sounding duration at a playhead in milliseconds. Expired notes
+    /// are skipped on resume instead of being replayed behind a sustained bass.
+    func remainingDuration(at position: Int64) -> Int64 {
+        max(0, startMilliseconds + durationMilliseconds - max(startMilliseconds, position))
+    }
 }
 
-struct PracticeSong: Identifiable, Hashable, Sendable {
+struct PracticeSong: Identifiable, Hashable, Codable, Sendable {
     let id: String
     let title: String
     let composer: String

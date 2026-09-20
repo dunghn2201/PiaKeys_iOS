@@ -45,7 +45,7 @@ struct MetronomeView: View {
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    StatusCapsule(text: viewModel.overallConnectionLabel, connected: viewModel.bleStatus.isConnected || !viewModel.wiredSources.isEmpty)
+                    StatusCapsule(text: viewModel.overallConnectionLabel, connected: viewModel.hasExternalMIDIConnection)
                 }
             }
         }
