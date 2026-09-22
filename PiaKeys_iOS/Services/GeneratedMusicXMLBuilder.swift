@@ -6,7 +6,7 @@ import Foundation
 /// as imported MusicXML. This keeps clefs, rests, accidentals, durations,
 /// chords, ties, bar layout, and playback highlighting consistent instead of
 /// maintaining a second hand-drawn notation engine.
-enum GeneratedMusicXMLBuilder {
+nonisolated enum GeneratedMusicXMLBuilder {
     private static let divisions = 480
     private static let minimumGrid = divisions / 8
 
@@ -29,6 +29,11 @@ enum GeneratedMusicXMLBuilder {
         let duration: Int
         let continuesFromPrevious: Bool
         let continuesIntoNext: Bool
+    }
+
+    private struct VoiceLane {
+        var fragments: [NoteFragment]
+        var end: Int
     }
 
     /// Returns a UTF-8 MusicXML document for a generated practice song.
@@ -104,14 +109,14 @@ enum GeneratedMusicXMLBuilder {
 
         let rightHand = notes.filter { $0.hand == .right }
         let leftHand = notes.filter { $0.hand == .left }
-            lines += renderStaff(
-                notes: rightHand,
-                staff: 1,
-                measureStart: measureStart,
-                measureEnd: measureEnd,
-                meter: meter,
-                tempo: tempo
-            )
+        lines += renderStaff(
+            notes: rightHand,
+            staff: 1,
+            measureStart: measureStart,
+            measureEnd: measureEnd,
+            meter: meter,
+            tempo: tempo
+        )
         lines += [
             "      <backup><duration>\(meter.measureTicks)</duration></backup>"
         ]
@@ -149,27 +154,60 @@ enum GeneratedMusicXMLBuilder {
             tempo: tempo
         )
         let grouped = Dictionary(grouping: fragments, by: \.start)
-        var cursor = 0
-        var lines: [String] = []
+        var lanes: [VoiceLane] = []
 
+        // A single MusicXML voice is sequential. MIDI piano data often has a
+        // sustained melody note overlapping a later note in the same hand;
+        // placing both in voice 1 makes the later note appear after the
+        // sustained duration and shifts the rest of the measure. Allocate
+        // overlapping onset groups to additional voices while keeping notes
+        // sharing an onset together as a chord.
         for start in grouped.keys.sorted() {
-            if start > cursor {
-                lines += renderRests(duration: start - cursor, staff: staff)
+            let group = (grouped[start] ?? []).sorted {
+                ($0.note.noteNumber, $0.note.id.uuidString) < ($1.note.noteNumber, $1.note.id.uuidString)
             }
-            let group = (grouped[start] ?? []).sorted { $0.note.noteNumber < $1.note.noteNumber }
-            for (index, fragment) in group.enumerated() {
-                lines += renderNote(
-                    fragment,
-                    staff: staff,
-                    chord: index > 0,
-                    stem: staff == 1 ? "up" : "down"
-                )
+            let groupEnd = group.map { $0.start + $0.duration }.max() ?? start
+            if let laneIndex = lanes.firstIndex(where: { $0.end <= start }) {
+                lanes[laneIndex].fragments.append(contentsOf: group)
+                lanes[laneIndex].end = groupEnd
+            } else {
+                lanes.append(VoiceLane(fragments: group, end: groupEnd))
             }
-            cursor = max(cursor, group.map { $0.start + $0.duration }.max() ?? cursor)
         }
 
-        if cursor < meter.measureTicks {
-            lines += renderRests(duration: meter.measureTicks - cursor, staff: staff)
+        guard !lanes.isEmpty else {
+            return renderRests(duration: meter.measureTicks, staff: staff, voice: 1)
+        }
+
+        var lines: [String] = []
+
+        for (laneIndex, lane) in lanes.enumerated() {
+            let voice = laneIndex + 1
+            if laneIndex > 0 {
+                lines.append("      <backup><duration>\(meter.measureTicks)</duration></backup>")
+            }
+            let laneGroups = Dictionary(grouping: lane.fragments, by: \.start)
+            var cursor = 0
+            for start in laneGroups.keys.sorted() {
+                if start > cursor {
+                    lines += renderRests(duration: start - cursor, staff: staff, voice: voice)
+                }
+                let group = (laneGroups[start] ?? []).sorted { $0.note.noteNumber < $1.note.noteNumber }
+                for (index, fragment) in group.enumerated() {
+                    lines += renderNote(
+                        fragment,
+                        staff: staff,
+                        voice: voice,
+                        chord: index > 0,
+                        stem: staff == 1 ? "up" : "down"
+                    )
+                }
+                cursor = max(cursor, group.map { $0.start + $0.duration }.max() ?? cursor)
+            }
+
+            if cursor < meter.measureTicks {
+                lines += renderRests(duration: meter.measureTicks - cursor, staff: staff, voice: voice)
+            }
         }
         return lines
     }
@@ -197,13 +235,13 @@ enum GeneratedMusicXMLBuilder {
         }
     }
 
-    private static func renderRests(duration: Int, staff: Int) -> [String] {
+    private static func renderRests(duration: Int, staff: Int, voice: Int) -> [String] {
         splitDuration(duration).map { spec in
             var lines = [
                 "      <note>",
                 "        <rest/>",
                 "        <duration>\(spec.ticks)</duration>",
-                "        <voice>1</voice>",
+                "        <voice>\(voice)</voice>",
                 "        <type>\(spec.type)</type>"
             ]
             lines += Array(repeating: "        <dot/>", count: spec.dots)
@@ -218,6 +256,7 @@ enum GeneratedMusicXMLBuilder {
     private static func renderNote(
         _ fragment: NoteFragment,
         staff: Int,
+        voice: Int,
         chord: Bool,
         stem: String
     ) -> [String] {
@@ -240,7 +279,7 @@ enum GeneratedMusicXMLBuilder {
                 "          <octave>\(pitch.octave)</octave>",
                 "        </pitch>",
                 "        <duration>\(spec.ticks)</duration>",
-                "        <voice>1</voice>",
+                "        <voice>\(voice)</voice>",
                 "        <type>\(spec.type)</type>"
             ]
             lines += Array(repeating: "        <dot/>", count: spec.dots)

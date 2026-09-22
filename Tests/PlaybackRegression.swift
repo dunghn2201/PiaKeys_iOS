@@ -48,6 +48,10 @@ final class PianoAudioEngine {
         Self.played.append(noteNumber)
     }
     func prepareForPlayback(notes: [(Int, Int)]) async {}
+    func startSongPlayback(notes: [SongNote], positionMilliseconds: Int64, speed: Double, loop: ClosedRange<Int64>?, startedAtNanoseconds: UInt64) {
+        Self.played += notes.filter { $0.remainingDuration(at: positionMilliseconds) > 0 }.map(\.noteNumber)
+    }
+    func stopSongPlayback() {}
     func playMetronomeClick(accent: Bool, profile: String) {}
 }
 
@@ -63,20 +67,42 @@ struct PlaybackRegression {
         }
         defaults.set(999, forKey: "tempo")
         let store = SongLibraryStore(directory: directory)
-        let model = MainViewModel(defaults: defaults, libraryStore: store)
+        let historyStore = PracticeHistoryStore(directory: directory)
+        let model = MainViewModel(defaults: defaults, libraryStore: store, historyStore: historyStore)
+        var broadUpdates = 0
+        var playheadUpdates = 0
+        let broadSubscription = model.objectWillChange.sink { broadUpdates += 1 }
+        let playheadSubscription = model.playbackPosition.objectWillChange.sink { playheadUpdates += 1 }
+        for tick in 1...300 { model.playbackPosition.milliseconds = Int64(tick * 33) }
+        precondition(broadUpdates == 0, "Playhead ticks must not invalidate both tabs")
+        precondition(playheadUpdates == 300, "Slider and score receive every playhead tick")
+        model.playbackPosition.milliseconds = 0
+        broadSubscription.cancel()
+        playheadSubscription.cancel()
         precondition(model.tempo == 220, "Clamp persisted tempo")
+        model.tempo = 999
+        precondition(model.tempo == 220, "Clamp runtime tempo")
+        model.playbackSpeed = 2
+        precondition(model.playbackSpeed == 1.5, "Clamp playback speed")
+        model.loopStartMilliseconds = -10
+        model.countInBars = 3
+        precondition(model.loopStartMilliseconds == 0 && model.countInBars == 2, "Clamp playback markers and count-in bars")
         let a = MIDINoteEvent(noteNumber: 60, velocity: 100, type: .noteOn, source: .ble, channel: 1)
         let b = MIDINoteEvent(noteNumber: 60, velocity: 100, type: .noteOn, source: .wired, channel: 1, sourceID: "1")
         model.coreMIDI.onEvents?([a])
         model.coreMIDI.onEvents?([b])
         model.coreMIDI.onEvents?([.init(noteNumber: 60, velocity: 0, type: .noteOff, source: .ble, channel: 1)])
+        try await Task.sleep(for: .milliseconds(40))
         precondition(model.heldNoteNumbers == [60], "Other source still holds note")
         precondition(PianoAudioEngine.released == [a.id], "Release only matching source/channel")
         model.coreMIDI.onEvents?([.init(noteNumber: 60, velocity: 0, type: .noteOff, source: .wired, channel: 1, sourceID: "1")])
+        try await Task.sleep(for: .milliseconds(40))
         precondition(model.heldNoteNumbers.isEmpty, "Final release clears highlight")
         model.beginPreviewNote(64)
-        precondition(model.heldNoteNumbers == [64], "Touch-down immediately starts note")
+        try await Task.sleep(for: .milliseconds(40))
+        precondition(model.heldNoteNumbers == [64], "Touch-down updates the highlight")
         model.endPreviewNote(64)
+        try await Task.sleep(for: .milliseconds(40))
         precondition(model.heldNoteNumbers.isEmpty, "Touch-up releases note")
         PianoAudioEngine.played.removeAll()
 
@@ -102,6 +128,8 @@ struct PlaybackRegression {
         let active = model.activeSongNotes
         model.songOutputRoute = .appOnly
         precondition(!model.songPlaying && model.activeSongNotes.isEmpty, "Route switch pauses cleanly")
+        try await Task.sleep(for: .milliseconds(40))
+        precondition(!model.songPlaying && model.activeSongNotes.isEmpty, "Cancelled playback cannot repopulate active notes")
         for note in active {
             precondition(model.coreMIDI.sent.contains("off:\(note)"), "Note-off sent through previous wired route")
         }
@@ -138,7 +166,7 @@ struct PlaybackRegression {
             .init(startMilliseconds: 10, durationMilliseconds: 20, noteNumber: 60, velocity: 100, hand: .right)
         ])
         try store.save([resumeSong])
-        let resumeModel = MainViewModel(defaults: defaults, libraryStore: store)
+        let resumeModel = MainViewModel(defaults: defaults, libraryStore: store, historyStore: historyStore)
         resumeModel.toggleSongPlayback()
         try await Task.sleep(for: .milliseconds(100))
         resumeModel.toggleSongPlayback()
@@ -147,6 +175,53 @@ struct PlaybackRegression {
         try await Task.sleep(for: .milliseconds(15))
         precondition(resumeModel.activeSongNotes == [48], "Resume skips expired melody behind long bass")
         resumeModel.suspendPlayback()
+
+        let practiceSong = PracticeSong(
+            id: "practice",
+            title: "Practice",
+            composer: "Test",
+            tempo: 120,
+            timeSignature: "4/4",
+            notes: [
+                .init(startMilliseconds: 0, durationMilliseconds: 100, noteNumber: 60, velocity: 100, hand: .right),
+                .init(startMilliseconds: 20, durationMilliseconds: 100, noteNumber: 64, velocity: 100, hand: .right),
+                .init(startMilliseconds: 500, durationMilliseconds: 100, noteNumber: 67, velocity: 100, hand: .right)
+            ]
+        )
+        let waitSession = PracticeSession(song: practiceSong, mode: .waitForNote, hand: .right, speed: 1)
+        waitSession.start(at: 10)
+        precondition(waitSession.targets.count == 2 && waitSession.targets[0].notes == [60, 64], "Group simultaneous practice targets")
+        precondition(waitSession.handle(noteOn: .init(noteNumber: 60, velocity: 100, type: .noteOn), playbackPositionMilliseconds: 0).outcome == .hit, "Wait mode accepts first chord note")
+        precondition(waitSession.currentTarget?.notes == [60, 64], "Chord waits for every note")
+        precondition(waitSession.handle(noteOn: .init(noteNumber: 64, velocity: 100, type: .noteOn), playbackPositionMilliseconds: 500).outcome == .hit, "Wait mode accepts remaining chord note")
+        precondition(waitSession.currentTarget?.notes == [67], "Wait mode advances after chord completion")
+        waitSession.finish()
+        precondition(waitSession.summary(activeDurationSeconds: 1).missedCount == 1, "Practice finish records missed notes")
+
+        let timedSession = PracticeSession(song: practiceSong, mode: .timed, hand: .right, speed: 1)
+        timedSession.start(at: 10)
+        precondition(timedSession.handle(noteOn: .init(noteNumber: 60, velocity: 100, type: .noteOn), playbackPositionMilliseconds: 200).outcome == .late, "Timed mode reports late expected pitch")
+        precondition(timedSession.handle(noteOn: .init(noteNumber: 65, velocity: 100, type: .noteOn), playbackPositionMilliseconds: 20).outcome == .wrongPitch, "Timed mode rejects wrong pitch")
+        precondition(timedSession.advanceTimedSession(to: 900).contains(where: { $0.outcome == .missed }), "Timed mode records missed targets")
+        precondition(timedSession.summary(activeDurationSeconds: 1).accuracy > 0, "Pitch accuracy includes correctly pitched late attempts")
+
+        let practiceModel = MainViewModel(
+            defaults: defaults,
+            libraryStore: store,
+            historyStore: historyStore
+        )
+        practiceModel.practiceMode = .waitForNote
+        practiceModel.practiceHand = .right
+        practiceModel.startPractice()
+        let firstPracticeTarget = practiceModel.practiceTargetNotes
+        precondition(!firstPracticeTarget.isEmpty, "Practice exposes initial target")
+        let heldPracticeNote = firstPracticeTarget.sorted().first!
+        practiceModel.beginPreviewNote(heldPracticeNote)
+        let targetAfterFirstAttack = practiceModel.practiceTargetNotes
+        practiceModel.beginPreviewNote(heldPracticeNote)
+        precondition(practiceModel.practiceTargetNotes == targetAfterFirstAttack, "Held note cannot auto-advance practice target")
+        practiceModel.endPreviewNote(heldPracticeNote)
+        practiceModel.stopPractice()
         print("PASS: playback, route cleanup, input ownership, import and interruption regression scenarios")
     }
 }

@@ -60,8 +60,11 @@ struct MetronomeView: View {
                     tempo: viewModel.tempo,
                     running: viewModel.metronomeRunning,
                     beat: viewModel.metronomeBeat,
-                    beatCount: Int(viewModel.timeSignature.split(separator: "/").first ?? "4") ?? 4,
-                    visualPulse: viewModel.visualPulse
+                    beatCount: viewModel.metronomeBeatsPerBar,
+                    beatIntervalMilliseconds: viewModel.metronomeBeatIntervalMilliseconds,
+                    visualPulse: viewModel.visualPulse,
+                    beatStartedAt: viewModel.metronomeBeatStartedAt,
+                    beatIndex: viewModel.metronomeBeatIndex
                 )
                 .frame(height: 300)
 
@@ -166,13 +169,19 @@ private struct PendulumView: View {
     let running: Bool
     let beat: Int
     let beatCount: Int
+    let beatIntervalMilliseconds: Int
     let visualPulse: Bool
+    let beatStartedAt: Date
+    let beatIndex: Int
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 60, paused: !running)) { timeline in
-            let interval = 60 / Double(max(1, tempo))
+        // Thirty updates per second are enough for a pendulum while leaving
+        // frame time for the surrounding ScrollView and controls.
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !running)) { timeline in
+            let interval = Double(max(1, beatIntervalMilliseconds)) / 1_000
             let phase = running
-                ? timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: interval * 2) / (interval * 2)
+                ? (Double(beatIndex) + beatStartedAt.distance(to: timeline.date) / interval)
+                    .truncatingRemainder(dividingBy: 2) / 2
                 : 0.25
             let angle = sin(phase * 2 * .pi) * 22
 

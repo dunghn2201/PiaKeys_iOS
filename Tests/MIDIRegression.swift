@@ -90,6 +90,19 @@ struct MIDIRegression {
         let tiedXML = String(data: GeneratedMusicXMLBuilder.data(for: tiedSong), encoding: .utf8)!
         check(tiedXML.contains("<accidental>sharp</accidental>"), "Generated score preserves accidentals")
         check(tiedXML.contains("<tie type=\"start\"/>") && tiedXML.contains("<tie type=\"stop\"/>") , "Generated score splits long notes with ties")
+        let overlappingSong = PracticeSong(
+            id: "overlapping-voices",
+            title: "Overlapping voices",
+            composer: "Test",
+            tempo: 120,
+            timeSignature: "4/4",
+            notes: [
+                .init(startMilliseconds: 0, durationMilliseconds: 1_500, noteNumber: 64, velocity: 90, hand: .right),
+                .init(startMilliseconds: 500, durationMilliseconds: 500, noteNumber: 67, velocity: 90, hand: .right)
+            ]
+        )
+        let overlappingXML = String(data: GeneratedMusicXMLBuilder.data(for: overlappingSong), encoding: .utf8)!
+        check(overlappingXML.contains("<voice>2</voice>"), "Generated score separates overlapping same-hand notes")
 
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

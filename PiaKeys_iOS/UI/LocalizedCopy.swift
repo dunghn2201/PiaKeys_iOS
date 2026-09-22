@@ -12,6 +12,7 @@ struct LocalizedCopy {
     }
 
     var practice: String { value("Practice", "Luyện tập", "練習") }
+    var midiMonitor: String { value("MIDI Monitor", "MIDI Monitor", "MIDIモニター") }
     var metronome: String { value("Metronome", "Máy đếm nhịp", "メトロノーム") }
     var setup: String { value("Setup", "Thiết lập", "設定") }
     var songs: String { value("Songs", "Bài nhạc", "曲") }
@@ -23,8 +24,13 @@ struct LocalizedCopy {
     var source: String { value("Source", "Nguồn", "入力") }
     var velocity: String { value("Velocity", "Lực nhấn", "ベロシティ") }
     var event: String { value("Event", "Sự kiện", "イベント") }
+    var tempo: String { value("Tempo", "Nhịp độ", "テンポ") }
+    var playing: String { value("Playing", "Đang phát", "再生中") }
+    var midiReady: String { value("MIDI", "MIDI", "MIDI") }
     var sheetPreview: String { value("Sheet preview", "Xem trước bản nhạc", "楽譜プレビュー") }
     var sheetMusic: String { value("Sheet music", "Bản nhạc", "楽譜") }
+    var previousPage: String { value("Previous page", "Trang trước", "前のページ") }
+    var nextPage: String { value("Next page", "Trang sau", "次のページ") }
     var openSheet: String { value("Open sheet music", "Mở bản nhạc", "楽譜を開く") }
     var close: String { value("Done", "Xong", "完了") }
     var keyboard: String { value("Keyboard", "Bàn phím", "鍵盤") }
@@ -55,6 +61,16 @@ struct LocalizedCopy {
     var audioFeedback: String { value("Audio feedback", "Phản hồi âm thanh", "オーディオフィードバック") }
     var appVolume: String { value("App volume", "Âm lượng ứng dụng", "アプリ音量") }
     var testC4: String { value("Play test C4", "Phát thử C4", "C4をテスト") }
+    var feedback: String { value("Send feedback", "Gửi phản hồi", "フィードバックを送る") }
+    var appVersion: String { value("App version", "Phiên bản ứng dụng", "アプリバージョン") }
+    var feedbackUnavailable: String { value("Mail unavailable", "Không có ứng dụng mail", "メールアプリを利用できません") }
+    var feedbackUnavailableMessage: String {
+        value(
+            "Set up a mail app on this iPhone to send feedback.",
+            "Hãy thiết lập ứng dụng mail trên iPhone để gửi phản hồi.",
+            "フィードバックを送るにはiPhoneにメールアプリを設定してください。"
+        )
+    }
     var practiceTiming: String { value("Practice timing", "Luyện nhịp", "テンポ練習") }
     var bpm: String { value("beats per minute", "nhịp mỗi phút", "BPM") }
     var start: String { value("Start", "Bắt đầu", "開始") }
@@ -64,4 +80,39 @@ struct LocalizedCopy {
     var firstBeatAccent: String { value("Accent first beat", "Nhấn phách đầu", "1拍目を強調") }
     var visualPulse: String { value("Visual pulse", "Nhịp trực quan", "視覚パルス") }
     var soundProfile: String { value("Sound profile", "Kiểu âm", "サウンド") }
+    var speed: String { value("Speed", "Tốc độ", "速度") }
+    var loop: String { value("Loop A–B", "Lặp A–B", "A–Bループ") }
+    var loopStart: String { value("Set A", "Đặt A", "Aを設定") }
+    var loopEnd: String { value("Set B", "Đặt B", "Bを設定") }
+    var countIn: String { value("Count in", "Đếm trước", "カウントイン") }
+    var countInBars: String { value("Bars", "Số ô nhịp", "小節数") }
+    var hands: String { value("Hands", "Tay chơi", "手") }
+    var bothHands: String { value("Both hands", "Hai tay", "両手") }
+    var leftHand: String { value("Left hand", "Tay trái", "左手") }
+    var rightHand: String { value("Right hand", "Tay phải", "右手") }
+    var practiceMode: String { value("Practice mode", "Chế độ luyện", "練習モード") }
+    var playAlong: String { value("Listen / play along", "Nghe / chơi cùng", "聴く・合わせて弾く") }
+    var waitForNote: String { value("Wait for my note", "Chờ nốt của tôi", "自分の音を待つ") }
+    var playWithTiming: String { value("Play with timing", "Chơi theo nhịp", "テンポに合わせて弾く") }
+    var startPractice: String { value("Start practice", "Bắt đầu luyện", "練習を開始") }
+    var stopPractice: String { value("Stop practice", "Dừng luyện", "練習を停止") }
+    var target: String { value("Target", "Mục tiêu", "目標") }
+    var waitingForNote: String { value("Play the highlighted note", "Chơi nốt đang chờ", "ハイライトされた音符を弾く") }
+    var countInBeat: String { value("Count-in %d", "Đếm trước %d", "カウントイン %d") }
+    var history: String { value("Practice history", "Lịch sử luyện tập", "練習履歴") }
+    var accuracy: String { value("Accuracy", "Độ chính xác", "正確度") }
+    var hits: String { value("Hits", "Đúng", "正解") }
+    var missed: String { value("Missed", "Bỏ lỡ", "ミス") }
+    var wrong: String { value("Wrong", "Sai nốt", "音程違い") }
+    var early: String { value("Early", "Sớm", "早い") }
+    var late: String { value("Late", "Trễ", "遅い") }
+    var clearHistory: String { value("Clear history", "Xóa lịch sử", "履歴を消去") }
+    var deleteSong: String { value("Delete song", "Xóa bài", "曲を削除") }
+    var timing: String { value("Timing", "Độ lệch", "タイミング") }
+    var hit: String { value("✓ Hit", "✓ Đúng", "✓ 正解") }
+    var earlyBy: String { value("Early by %d ms", "Sớm %d ms", "%d ms 早い") }
+    var lateBy: String { value("Late by %d ms", "Trễ %d ms", "%d ms 遅い") }
+    var wrongNote: String { value("Wrong note", "Sai nốt", "音程違い") }
+    var extraNote: String { value("Extra note", "Nốt thừa", "余分な音") }
+    var missedNote: String { value("Missed note", "Bỏ lỡ nốt", "ミスした音") }
 }

@@ -1,14 +1,20 @@
 import SwiftUI
 import UIKit
-import UniformTypeIdentifiers
 
-struct PracticeDashboardView: View {
+struct MIDIWorkspaceView: View {
+    enum Layout {
+        case monitor
+        case songStudio
+    }
+
     @ObservedObject var viewModel: MainViewModel
+    let layout: Layout
     let openSetup: () -> Void
+    let openSongStudio: () -> Void
+    let requestSongImport: () -> Void
+    let requestScoreImport: () -> Void
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @State private var importingSong = false
-    @State private var importingScore = false
     @State private var showingFullKeyboard = false
     @State private var scoreContentHeight: CGFloat = 180
     @State private var sheetDetail: SheetDetail?
@@ -18,56 +24,64 @@ struct PracticeDashboardView: View {
     private var combinedActiveNotes: Set<Int> { viewModel.heldNoteNumbers.union(viewModel.activeSongNotes) }
     private var displayNote: Int? { viewModel.latestSongNoteNumber ?? activeEvent?.noteNumber }
 
+    init(
+        viewModel: MainViewModel,
+        layout: Layout = .monitor,
+        openSetup: @escaping () -> Void,
+        openSongStudio: @escaping () -> Void = {},
+        requestSongImport: @escaping () -> Void = {},
+        requestScoreImport: @escaping () -> Void = {}
+    ) {
+        self.viewModel = viewModel
+        self.layout = layout
+        self.openSetup = openSetup
+        self.openSongStudio = openSongStudio
+        self.requestSongImport = requestSongImport
+        self.requestScoreImport = requestScoreImport
+    }
+
     var body: some View {
         VStack(spacing: 14) {
-            liveMonitorCard
+            switch layout {
+            case .monitor:
+                liveMonitorCard
+                keyboardCard
+                HStack(spacing: 10) {
+                    Button {
+                        openSongStudio()
+                    } label: {
+                        Label(copy.songStudio, systemImage: "play.square.stack")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
 
-            songPlayerCard
+                    Button {
+                        openSetup()
+                    } label: {
+                        Label(copy.setup, systemImage: "gearshape")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            case .songStudio:
+                songPlayerCard
 
-            if let scoreURL = viewModel.selectedSong?.scoreURL {
-                scoreCard(url: scoreURL)
-            } else {
-                songStaffCard
-            }
+                if let scoreURL = viewModel.selectedSong?.scoreURL {
+                    scoreCard(url: scoreURL)
+                } else {
+                    songStaffCard
+                }
 
-            keyboardCard
-
-            if horizontalSizeClass == .regular {
-                HStack(alignment: .top, spacing: 14) {
+                if horizontalSizeClass == .regular {
+                    HStack(alignment: .top, spacing: 14) {
+                        libraryCard
+                        outputCard
+                    }
+                } else {
                     libraryCard
                     outputCard
                 }
-            } else {
-                libraryCard
-                outputCard
             }
-        }
-        .fileImporter(
-            isPresented: $importingSong,
-            allowedContentTypes: [.midi, UTType(filenameExtension: "mid") ?? .data],
-            allowsMultipleSelection: false
-        ) { result in
-            if case let .success(urls) = result, let url = urls.first { viewModel.importSong(from: url) }
-            if case let .failure(error) = result { viewModel.showImportError(error.localizedDescription) }
-        }
-        .fileImporter(
-            isPresented: $importingScore,
-            allowedContentTypes: [UTType(filenameExtension: "musicxml") ?? .xml, UTType(filenameExtension: "mxl") ?? .zip, .xml],
-            allowsMultipleSelection: false
-        ) { result in
-            if case let .success(urls) = result, let url = urls.first { viewModel.importScore(from: url) }
-            if case let .failure(error) = result { viewModel.showImportError(error.localizedDescription) }
-        }
-        .alert(
-            "PiaKeys",
-            isPresented: Binding(
-                get: { viewModel.importMessage != nil },
-                set: { if !$0 { viewModel.clearImportMessage() } }
-            )
-        ) {
-            Button("OK") { viewModel.clearImportMessage() }
-        } message: {
-            Text(viewModel.importMessage ?? "")
         }
         .background {
             LandscapeKeyboardPresenter(
@@ -77,11 +91,13 @@ struct PracticeDashboardView: View {
             .frame(width: 0, height: 0)
         }
         .sheet(item: $sheetDetail) { detail in
-            SheetMusicDetailView(
-                detail: detail,
-                positionMilliseconds: viewModel.songPositionMilliseconds,
-                copy: copy
-            )
+            PlaybackPositionView(position: viewModel.playbackPosition) { milliseconds in
+                SheetMusicDetailView(
+                    detail: detail,
+                    positionMilliseconds: milliseconds,
+                    copy: copy
+                )
+            }
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
@@ -143,7 +159,8 @@ struct PracticeDashboardView: View {
     }
 
     private var songPlayerCard: some View {
-        PiaKeysCard {
+        let duration = viewModel.selectedSongDurationMilliseconds
+        return PiaKeysCard {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     SectionTitle(
@@ -152,26 +169,36 @@ struct PracticeDashboardView: View {
                         symbol: "play.square.stack"
                     )
                     Spacer()
-                    Text(viewModel.songPlaying ? "ON" : "MIDI")
+                    Text(viewModel.songPlaying ? copy.playing : copy.midiReady)
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(viewModel.songPlaying ? PiaKeysTheme.gold : PiaKeysTheme.purple)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)
-                        .background(.thinMaterial, in: Capsule())
+                        .background(Color(uiColor: .systemBackground), in: Capsule())
                 }
 
-                ProgressView(value: viewModel.selectedSongProgress)
-                    .tint(PiaKeysTheme.purple)
-                HStack {
-                    Text(format(milliseconds: viewModel.songPositionMilliseconds))
-                    Spacer()
-                    Text(format(milliseconds: viewModel.selectedSong?.durationMilliseconds ?? 0))
+                PlaybackPositionView(position: viewModel.playbackPosition) { milliseconds in
+                    VStack(spacing: 14) {
+                        Slider(
+                            value: Binding(
+                                get: { Double(milliseconds) },
+                                set: { viewModel.seekSong(to: Int64($0.rounded())) }
+                            ),
+                            in: 0...Double(max(1, duration))
+                        )
+                        .tint(PiaKeysTheme.gold)
+                        HStack {
+                            Text(format(milliseconds: milliseconds))
+                            Spacer()
+                            Text(format(milliseconds: duration))
+                        }
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    }
                 }
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
 
                 HStack(spacing: 8) {
-                    MetricPill(title: "Tempo", value: "\(viewModel.selectedSong?.tempo ?? 0)")
+                    MetricPill(title: copy.tempo, value: "\(viewModel.selectedSong?.tempo ?? 0)")
                     MetricPill(title: copy.timeSignature, value: viewModel.selectedSong?.timeSignature ?? "—")
                     MetricPill(title: copy.chord, value: ChordRecognizer.recognize(combinedActiveNotes)?.symbol ?? "—")
                 }
@@ -188,7 +215,78 @@ struct PracticeDashboardView: View {
                     Button(copy.reset) { viewModel.resetSong() }
                         .buttonStyle(.bordered)
                 }
+
+                HStack(spacing: 8) {
+                    Text(copy.speed).font(.caption.weight(.semibold))
+                    ForEach([0.5, 0.75, 1.0, 1.25, 1.5], id: \.self) { speed in
+                        Button("\(speed, specifier: "%.2g")×") {
+                            viewModel.playbackSpeed = speed
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(viewModel.playbackSpeed == speed ? PiaKeysTheme.purple : .secondary)
+                        .font(.caption2.monospacedDigit())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                        .frame(minWidth: 40)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Toggle(copy.loop, isOn: $viewModel.loopEnabled)
+                        .font(.caption)
+                    Button(copy.loopStart) {
+                        viewModel.loopStartMilliseconds = viewModel.songPositionMilliseconds
+                    }
+                    .buttonStyle(.bordered)
+                    Button(copy.loopEnd) {
+                        viewModel.loopEndMilliseconds = viewModel.songPositionMilliseconds
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                HStack {
+                    Picker(copy.hands, selection: $viewModel.playbackHand) {
+                        ForEach(PracticeHandSelection.allCases) { hand in
+                            Text(handLabel(hand)).tag(hand)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    Toggle(copy.countIn, isOn: $viewModel.countInEnabled)
+                        .font(.caption)
+                }
+
+                if viewModel.countInEnabled {
+                    Picker(
+                        copy.countInBars,
+                        selection: Binding(
+                            get: { viewModel.countInBars },
+                            set: { viewModel.countInBars = $0 }
+                        )
+                    ) {
+                        Text("1").tag(1)
+                        Text("2").tag(2)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityLabel(copy.countInBars)
+                }
+
+                if viewModel.practiceCountingIn {
+                    Label(
+                        String(format: copy.countInBeat, viewModel.practiceCountInBeat + 1),
+                        systemImage: "metronome"
+                    )
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(PiaKeysTheme.gold)
+                }
             }
+        }
+    }
+
+    private func handLabel(_ hand: PracticeHandSelection) -> String {
+        switch hand {
+        case .both: copy.bothHands
+        case .left: copy.leftHand
+        case .right: copy.rightHand
         }
     }
 
@@ -198,16 +296,18 @@ struct PracticeDashboardView: View {
                 HStack {
                     SectionTitle(title: copy.sheetPreview, symbol: "music.quarternote.3")
                     Spacer()
-                    Button(copy.importScore) { importingScore = true }
+                    Button(copy.importScore) { requestScoreImport() }
                         .font(.caption)
                 }
                 Button { sheetDetail = .generated(viewModel.selectedSong) } label: {
                     ZStack(alignment: .bottomTrailing) {
-                        SongStaffPreview(
-                            song: viewModel.selectedSong,
-                            positionMilliseconds: viewModel.songPositionMilliseconds,
-                            activeNotes: viewModel.activeSongNotes
-                        )
+                        PlaybackPositionView(position: viewModel.playbackPosition) { milliseconds in
+                            SongStaffPreview(
+                                song: viewModel.selectedSong,
+                                positionMilliseconds: milliseconds,
+                                activeNotes: viewModel.activeSongNotes
+                            )
+                        }
                         openSheetHint
                     }
                 }
@@ -223,17 +323,19 @@ struct PracticeDashboardView: View {
                 HStack {
                     SectionTitle(title: copy.sheetPreview, symbol: "music.note.list")
                     Spacer()
-                    Button(copy.importScore) { importingScore = true }
+                    Button(copy.importScore) { requestScoreImport() }
                         .font(.caption)
                 }
                 Button { sheetDetail = .musicXML(url) } label: {
                     ZStack(alignment: .bottomTrailing) {
-                        MusicXMLScoreView(
-                            url: url,
-                            positionMilliseconds: viewModel.songPositionMilliseconds,
-                            contentHeight: $scoreContentHeight
-                        )
-                        .allowsHitTesting(false)
+                        PlaybackPositionView(position: viewModel.playbackPosition) { milliseconds in
+                            MusicXMLScoreView(
+                                url: url,
+                                positionMilliseconds: milliseconds,
+                                contentHeight: $scoreContentHeight
+                            )
+                            .allowsHitTesting(false)
+                        }
                         openSheetHint
                     }
                 }
@@ -252,7 +354,7 @@ struct PracticeDashboardView: View {
             .foregroundStyle(PiaKeysTheme.purple)
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .background(.regularMaterial, in: Capsule())
+            .background(Color(uiColor: .systemBackground), in: Capsule())
             .padding(10)
     }
 
@@ -294,6 +396,7 @@ struct PracticeDashboardView: View {
                     onNoteOn: viewModel.beginPreviewNote,
                     onNoteOff: viewModel.endPreviewNote
                 )
+                .equatable()
             }
         }
     }
@@ -305,7 +408,7 @@ struct PracticeDashboardView: View {
                     SectionTitle(title: copy.library, symbol: "books.vertical")
                     Spacer()
                     Button {
-                        importingSong = true
+                        requestSongImport()
                     } label: {
                         Label(copy.importMIDI, systemImage: "square.and.arrow.down")
                     }
@@ -329,6 +432,15 @@ struct PracticeDashboardView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        if song.id != PracticeSong.demo.id {
+                            Button(role: .destructive) {
+                                viewModel.deleteSong(song.id)
+                            } label: {
+                                Label(copy.deleteSong, systemImage: "trash")
+                            }
+                        }
+                    }
                     if song.id != viewModel.songs.last?.id { Divider() }
                 }
             }
@@ -376,6 +488,16 @@ struct PracticeDashboardView: View {
     }
 }
 
+/// Confines the 30 Hz observation to content that actually displays time.
+private struct PlaybackPositionView<Content: View>: View {
+    @ObservedObject var position: PlaybackPosition
+    @ViewBuilder let content: (Int64) -> Content
+
+    var body: some View {
+        content(position.milliseconds)
+    }
+}
+
 private enum SheetDetail: Identifiable {
     case generated(PracticeSong?)
     case musicXML(URL)
@@ -395,38 +517,48 @@ private struct SheetMusicDetailView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var scoreContentHeight: CGFloat = 520
+    @State private var scorePage = 1
+    @State private var scorePageCount = 1
 
     var body: some View {
         NavigationStack {
             Group {
                 switch detail {
                 case let .generated(song):
-                    ScrollView {
+                    VStack(spacing: 10) {
                         if let song {
                             GeneratedSongScoreView(
                                 song: song,
                                 positionMilliseconds: positionMilliseconds,
                                 height: 420,
-                                showsAllPages: true
+                                showsAllPages: false,
+                                page: scorePage,
+                                onPageCount: updatePageCount,
+                                onPageChange: updatePage
                             )
-                            .padding()
+                            .padding(.horizontal)
+                            pageControls
                         } else {
                             ContentUnavailableView("No sheet music", systemImage: "music.note.list")
                         }
                     }
                 case let .musicXML(url):
-                    ScrollView(.vertical) {
+                    VStack(spacing: 10) {
                         MusicXMLScoreView(
                             url: url,
                             positionMilliseconds: positionMilliseconds,
                             contentHeight: $scoreContentHeight,
-                            heightRange: 360...60_000,
-                            showsAllPages: true
+                            heightRange: 360...620,
+                            showsAllPages: false,
+                            page: scorePage,
+                            onPageCount: updatePageCount,
+                            onPageChange: updatePage
                         )
                         .frame(maxWidth: .infinity)
-                        .frame(height: max(360, scoreContentHeight))
+                        .frame(height: min(620, max(360, scoreContentHeight)))
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                         .padding()
+                        pageControls
                     }
                 }
             }
@@ -438,6 +570,46 @@ private struct SheetMusicDetailView: View {
                 }
             }
         }
+    }
+
+    private var pageControls: some View {
+        Group {
+            if scorePageCount > 1 {
+                HStack(spacing: 18) {
+                    Button {
+                        scorePage = max(1, scorePage - 1)
+                    } label: {
+                        Label(copy.previousPage, systemImage: "chevron.left")
+                    }
+                    .disabled(scorePage <= 1)
+
+                    Text("\(scorePage) / \(scorePageCount)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+
+                    Button {
+                        scorePage = min(scorePageCount, scorePage + 1)
+                    } label: {
+                        Label(copy.nextPage, systemImage: "chevron.right")
+                    }
+                    .disabled(scorePage >= scorePageCount)
+                }
+                .buttonStyle(.bordered)
+                .padding(.bottom, 8)
+            }
+        }
+    }
+
+    private func updatePageCount(_ count: Int) {
+        scorePageCount = max(1, count)
+        scorePage = min(max(1, scorePage), scorePageCount)
+    }
+
+    private func updatePage(_ page: Int) {
+        // The WebView can report the active page before its render-status
+        // message updates scorePageCount. Keep that page until the count is
+        // known; updatePageCount performs the final bounds check.
+        scorePage = max(1, page)
     }
 }
 
@@ -466,6 +638,7 @@ private struct FullKeyboardView: View {
                     onNoteOn: viewModel.beginPreviewNote,
                     onNoteOff: viewModel.endPreviewNote
                 )
+                .equatable()
                 PianoKeyboardView(
                     activeNotes: viewModel.heldNoteNumbers.union(viewModel.activeSongNotes),
                     firstNote: 65,
@@ -475,6 +648,7 @@ private struct FullKeyboardView: View {
                     onNoteOn: viewModel.beginPreviewNote,
                     onNoteOff: viewModel.endPreviewNote
                 )
+                .equatable()
             }
             .padding()
         }

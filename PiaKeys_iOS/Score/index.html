@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <style>
-    html, body { margin: 0; padding: 0; background: #fff; overflow: hidden; }
+    html, body { margin: 0; padding: 0; background: #fff; overflow: auto; }
     #score { width: 100%; min-height: 100%; overflow: visible; background: #fff; }
     #score svg { display: block; width: 100%; height: auto; background: #fff; }
     #score .playing, #score .playing * { fill: #7c4dff !important; stroke: #7c4dff !important; }
@@ -19,15 +19,52 @@
     let pendingScore = null;
     let currentPage = 1;
     let highlightedIds = [];
+    let allPagesMode = false;
+    let lastAutoScrollAt = 0;
+    let lastAutoScrollTop = null;
+
+    // Keep playback following the score without re-centering on every note.
+    // The short cooldown lets one smooth scroll settle before another one is
+    // considered, while the distance threshold ignores tiny corrections.
+    const autoScrollCooldownMilliseconds = 350;
+    const autoScrollMinimumDistance = 80;
 
     function showMessage(message) {
       document.getElementById('score').innerHTML = '<div id="message">' + message + '</div>';
     }
 
+    function reportRenderStatus(token, success, message) {
+      if (!window.webkit || !window.webkit.messageHandlers.scoreStatus) return;
+      window.webkit.messageHandlers.scoreStatus.postMessage({
+        token: token,
+        success: success,
+        message: message || '',
+        pageCount: toolkit ? toolkit.getPageCount() : 0
+      });
+    }
+
+    function reportPageChange(page) {
+      if (!window.webkit || !window.webkit.messageHandlers.scorePage) return;
+      window.webkit.messageHandlers.scorePage.postMessage(page);
+    }
+
+    function resetScoreScroll() {
+      lastAutoScrollAt = 0;
+      lastAutoScrollTop = null;
+      const scrollingElement = document.scrollingElement || document.documentElement;
+      if (scrollingElement) {
+        scrollingElement.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+      } else {
+        window.scrollTo(0, 0);
+      }
+    }
+
     function renderPage(page) {
       currentPage = Math.max(1, Math.min(page, toolkit.getPageCount()));
       document.getElementById('score').innerHTML = toolkit.renderToSVG(currentPage, false);
+      resetScoreScroll();
       reportScoreHeight();
+      reportPageChange(currentPage);
     }
 
     function reportScoreHeight() {
@@ -41,21 +78,66 @@
       });
     }
 
-    function renderScorePages(allPages) {
+    function renderScorePages(allPages, page) {
+      allPagesMode = allPages;
       const pageCount = toolkit.getPageCount();
+      if (!allPages) {
+        renderPage(page);
+        return;
+      }
       const pages = [];
-      const lastPage = allPages ? pageCount : 1;
+      const lastPage = pageCount;
       for (let page = 1; page <= lastPage; page += 1) {
         pages.push(toolkit.renderToSVG(page, false));
       }
       currentPage = 1;
       document.getElementById('score').innerHTML = pages.join('');
+      resetScoreScroll();
+      reportPageChange(currentPage);
       reportScoreHeight();
     }
 
-    function loadScore(base64, compressed, allPages) {
+    function gentlyFollowNote(element) {
+      if (!element) return;
+      const scrollingElement = document.scrollingElement || document.documentElement;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      if (!scrollingElement || viewportHeight <= 0) return;
+
+      const rect = element.getBoundingClientRect();
+      const safeMargin = Math.min(120, Math.max(48, viewportHeight * 0.2));
+      const isOutsideSafeZone = rect.top < safeMargin || rect.bottom > viewportHeight - safeMargin;
+      if (!isOutsideSafeZone) {
+        return;
+      }
+
+      const now = performance.now();
+      const desiredTop = Math.max(
+        0,
+        Math.min(
+          Math.max(0, scrollingElement.scrollHeight - viewportHeight),
+          scrollingElement.scrollTop + rect.top - viewportHeight * 0.42
+        )
+      );
+      if (lastAutoScrollTop !== null &&
+          Math.abs(desiredTop - lastAutoScrollTop) < autoScrollMinimumDistance) {
+        return;
+      }
+      if (now - lastAutoScrollAt < autoScrollCooldownMilliseconds) return;
+
+      scrollingElement.scrollTo({ top: desiredTop, left: 0, behavior: 'smooth' });
+      lastAutoScrollAt = now;
+      lastAutoScrollTop = desiredTop;
+    }
+
+    function loadScore(base64, compressed, allPages, token, requestedPage) {
       if (!toolkit) {
-        pendingScore = { base64: base64, compressed: compressed, allPages: allPages };
+        pendingScore = {
+          base64: base64,
+          compressed: compressed,
+          allPages: allPages,
+          token: token,
+          requestedPage: requestedPage
+        };
         return;
       }
       try {
@@ -80,13 +162,16 @@
         if (!loaded) {
           console.error('Verovio rejected the MusicXML score');
           showMessage('Unable to read this MusicXML score.');
+          reportRenderStatus(token, false, 'Unable to read this MusicXML score.');
           return;
         }
-        renderScorePages(allPages);
+        renderScorePages(allPages, requestedPage || 1);
         console.log('MusicXML rendered with ' + toolkit.getPageCount() + ' pages');
+        reportRenderStatus(token, true, '');
       } catch (error) {
         console.error('MusicXML rendering failed: ' + error);
         showMessage('Unable to render this MusicXML score.');
+        reportRenderStatus(token, false, 'Unable to render this MusicXML score.');
       }
     }
 
@@ -104,15 +189,23 @@
       const noteIds = elements && elements.notes ? elements.notes : [];
       if (noteIds.length > 0) {
         const page = toolkit.getPageWithElement(noteIds[0]);
-        if (page > 0) currentPage = page;
+        if (!allPagesMode && page > 0 && page !== currentPage) renderPage(page);
+        let firstElement = null;
         noteIds.forEach(function(id) {
           const element = document.getElementById(id);
           if (element) {
             element.classList.add('playing');
             highlightedIds.push(id);
+            if (!firstElement) firstElement = element;
           }
         });
+        gentlyFollowNote(firstElement);
       }
+    };
+
+    window.setScorePage = function(page) {
+      if (!toolkit || toolkit.getPageCount() === 0) return;
+      renderPage(page);
     };
 
     verovio.module.onRuntimeInitialized = function() {
@@ -121,7 +214,7 @@
       if (pendingScore) {
         const score = pendingScore;
         pendingScore = null;
-        loadScore(score.base64, score.compressed, score.allPages);
+        loadScore(score.base64, score.compressed, score.allPages, score.token, score.requestedPage);
       }
     };
   </script>

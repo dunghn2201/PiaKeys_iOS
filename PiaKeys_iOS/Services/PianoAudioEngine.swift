@@ -28,7 +28,11 @@ final class PianoAudioEngine {
     }
 
     private static let voiceCount = 48
-    private static let sampleCacheLimit = 24
+    // A decoded stereo FLAC is roughly 2.8 MB. Keeping 40 recent samples
+    // covers a typical full-range song (including both velocity layers)
+    // without allowing the cache to grow without bound. Cache misses decode
+    // synchronously on the audio queue and can otherwise delay the next note.
+    private static let sampleCacheLimit = 40
     private static let releaseMilliseconds: Int64 = 220
     private static let fadeMilliseconds: Int64 = 180
     private static let renderFormat = AVAudioFormat(
@@ -37,7 +41,9 @@ final class PianoAudioEngine {
     )!
 
     private let engine = AVAudioEngine()
-    private let audioQueue = DispatchQueue(label: "dunghn2201.PiaKeys.audio")
+    private let audioQueue = DispatchQueue(label: "dunghn2201.PiaKeys.audio", qos: .userInteractive)
+    private lazy var songScheduler = SongAudioScheduler(queue: audioQueue)
+    private var songVoiceIDs: Set<UUID> = []
     private var samples: [Sample] = []
     private var sampleBuffers: [URL: AVAudioPCMBuffer] = [:]
     private var sampleBufferOrder: [URL] = []
@@ -92,6 +98,51 @@ final class PianoAudioEngine {
         }
     }
 
+    /// Runs song note deadlines on the audio queue, independently of SwiftUI's
+    /// main actor. The UI playhead may skip frames without delaying note attacks.
+    func startSongPlayback(
+        notes: [SongNote],
+        positionMilliseconds: Int64,
+        speed: Double,
+        loop: ClosedRange<Int64>?,
+        startedAtNanoseconds: UInt64
+    ) {
+        audioQueue.async { [self] in
+            cancelSongPlayback()
+            songVoiceIDs = Set(notes.map(\.id))
+            songScheduler.start(
+                notes: notes,
+                positionMilliseconds: positionMilliseconds,
+                speed: speed,
+                loop: loop,
+                startedAtNanoseconds: startedAtNanoseconds,
+                onNote: { [weak self] note, duration in
+                    self?.playNow(noteNumber: note.noteNumber, velocity: note.velocity,
+                                  durationMilliseconds: duration, voiceID: note.id)
+                },
+                onLoop: { [weak self] in self?.stopSongVoices() }
+            )
+        }
+    }
+
+    func stopSongPlayback() {
+        audioQueue.async { [self] in cancelSongPlayback() }
+    }
+
+    /// Only accessed on audioQueue; preview/live voices are left sounding.
+    private func cancelSongPlayback() {
+        songScheduler.stop()
+        stopSongVoices()
+        songVoiceIDs.removeAll()
+    }
+
+    private func stopSongVoices() {
+        for voice in voices where voice.noteID.map(songVoiceIDs.contains) == true {
+            voice.generation += 1
+            releaseVoice(voice, generation: voice.generation)
+        }
+    }
+
     private func playNow(noteNumber: Int, velocity: Int, durationMilliseconds: Int64?, voiceID: UUID? = nil) {
         prepareEngine()
         if let sample = closestSample(to: noteNumber, velocity: velocity),
@@ -133,6 +184,7 @@ final class PianoAudioEngine {
 
     func stopAll() {
         audioQueue.async { [self] in
+            cancelSongPlayback()
             for voice in voices {
                 voice.generation += 1
                 voice.player.stop()
@@ -424,4 +476,71 @@ final class PianoAudioEngine {
         try? session.setActive(true)
 #endif
     }
+}
+
+/// One deadline timer on the audio queue. All methods and callbacks run on that
+/// queue; UI congestion cannot delay its note scheduling. Kept separate from
+/// AVAudioEngine so timing/cancellation can be tested without audio hardware.
+nonisolated final class SongAudioScheduler {
+    private let queue: DispatchQueue
+    private var timer: DispatchSourceTimer?
+
+    init(queue: DispatchQueue) { self.queue = queue }
+
+    func start(
+        notes: [SongNote], positionMilliseconds: Int64, speed: Double,
+        loop: ClosedRange<Int64>?, startedAtNanoseconds: UInt64,
+        onNote: @escaping (SongNote, Int64) -> Void,
+        onLoop: @escaping () -> Void
+    ) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        stop()
+        var origin = startedAtNanoseconds
+        var index = notes.firstIndex {
+            $0.startMilliseconds + $0.durationMilliseconds > positionMilliseconds
+        } ?? notes.count
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        self.timer = timer
+        timer.setEventHandler { [weak self] in
+            guard let self, let timer = self.timer else { return }
+            let now = DispatchTime.now().uptimeNanoseconds
+            var position = Int64(Double(now >= origin ? now - origin : 0) / 1_000_000 * speed)
+            if let loop, position >= loop.upperBound {
+                onLoop()
+                position = loop.lowerBound
+                origin = now - UInt64(Double(position) / speed * 1_000_000)
+                index = notes.firstIndex {
+                    $0.startMilliseconds + $0.durationMilliseconds > position
+                } ?? notes.count
+            }
+            while index < notes.count, notes[index].startMilliseconds <= position {
+                let note = notes[index]
+                let end = min(note.startMilliseconds + note.durationMilliseconds, loop?.upperBound ?? Int64.max)
+                let remaining = end - position
+                if remaining > 0 {
+                    onNote(note, max(1, Int64(Double(remaining) / speed)))
+                }
+                index += 1
+            }
+            let nextNote = index < notes.count ? notes[index].startMilliseconds : Int64.max
+            let next = min(nextNote, loop?.upperBound ?? Int64.max)
+            guard next != Int64.max else {
+                timer.cancel()
+                self.timer = nil
+                return
+            }
+            let deadline = origin + UInt64(Double(next) / speed * 1_000_000)
+            timer.schedule(deadline: DispatchTime(uptimeNanoseconds: max(now + 1_000_000, deadline)), leeway: .milliseconds(1))
+        }
+        timer.schedule(deadline: .now())
+        timer.resume()
+    }
+
+    func stop() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        timer?.cancel()
+        timer = nil
+    }
+
+    deinit { timer?.cancel() }
 }

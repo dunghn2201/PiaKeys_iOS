@@ -4,10 +4,12 @@ import SwiftUI
 struct SetupView: View {
     @ObservedObject var viewModel: MainViewModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.openURL) private var openURL
     @State private var scanTapSequence = 0
     @State private var scanTapFeedback = false
     @State private var showBluetoothMIDIPicker = false
     @State private var showLegal = false
+    @State private var showFeedbackUnavailable = false
 
     private var copy: LocalizedCopy { .init(language: viewModel.language) }
 
@@ -229,10 +231,50 @@ struct SetupView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.bordered)
+
+                Button(action: openFeedback) {
+                    Label(copy.feedback, systemImage: "envelope")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.bordered)
+
+                Text("\(copy.appVersion): \(appVersion)")
+                    .font(.footnote.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .sheet(isPresented: $showLegal) {
             LegalView()
+        }
+        .alert(copy.feedbackUnavailable, isPresented: $showFeedbackUnavailable) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(copy.feedbackUnavailableMessage)
+        }
+    }
+
+    private var appVersion: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+        return "\(version) (\(build))"
+    }
+
+    private func openFeedback() {
+        var components = URLComponents()
+        components.scheme = "mailto"
+        components.path = "dunghn2201@gmail.com"
+        components.queryItems = [
+            URLQueryItem(name: "subject", value: "PiaKeys iOS Feedback"),
+            URLQueryItem(name: "body", value: "\n\nApp version: \(appVersion)")
+        ]
+
+        guard let url = components.url else {
+            showFeedbackUnavailable = true
+            return
+        }
+        openURL(url) { accepted in
+            if !accepted { showFeedbackUnavailable = true }
         }
     }
 

@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct PianoKeyboardView: View {
+struct PianoKeyboardView: View, Equatable {
     let activeNotes: Set<Int>
     var firstNote = 21
     var lastNote = 108
@@ -8,6 +8,14 @@ struct PianoKeyboardView: View {
     var fitToWidth = false
     let onNoteOn: (Int) -> Void
     let onNoteOff: (Int) -> Void
+
+    static func == (lhs: PianoKeyboardView, rhs: PianoKeyboardView) -> Bool {
+        lhs.activeNotes == rhs.activeNotes &&
+            lhs.firstNote == rhs.firstNote &&
+            lhs.lastNote == rhs.lastNote &&
+            lhs.height == rhs.height &&
+            lhs.fitToWidth == rhs.fitToWidth
+    }
 
     private var notes: [Int] { Array(firstNote...lastNote) }
     private var whiteNotes: [Int] { notes.filter { !$0.isBlackPianoKey } }
@@ -64,6 +72,11 @@ struct PianoKeyboardView: View {
         }
         .frame(width: width, height: height, alignment: .leading)
         .padding(.horizontal, 1)
+        // The keyboard contains 88 keys, labels, strokes and gestures. Render
+        // the static stack as one composited layer so vertical scrolling does
+        // not repeatedly blend every key independently.
+        .drawingGroup()
+        .shadow(color: .black.opacity(0.08), radius: 2, y: 1)
     }
 }
 
@@ -86,7 +99,6 @@ private struct PianoKeyTouchView: View {
                     RoundedRectangle(cornerRadius: isBlack ? 5 : 7, style: .continuous)
                         .stroke(borderColor, lineWidth: active ? 2.5 : 1)
                 }
-                .shadow(color: .black.opacity(isBlack ? 0.24 : 0.06), radius: 1, y: 1)
 
             if !isBlack && showsLabel {
                 Text(note.noteName)

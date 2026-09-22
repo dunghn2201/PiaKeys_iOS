@@ -6,8 +6,8 @@ struct ContentView: View {
 
     var body: some View {
         TabView {
-            PracticeRootView(viewModel: viewModel)
-                .tabItem { Label(LocalizedCopy(language: viewModel.language).practice, systemImage: "pianokeys") }
+            MIDIMonitorRootView(viewModel: viewModel)
+                .tabItem { Label(LocalizedCopy(language: viewModel.language).midiMonitor, systemImage: "pianokeys") }
 
             MetronomeView(viewModel: viewModel)
                 .tabItem { Label(LocalizedCopy(language: viewModel.language).metronome, systemImage: "metronome") }

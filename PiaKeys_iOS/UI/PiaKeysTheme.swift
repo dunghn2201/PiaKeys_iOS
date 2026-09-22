@@ -28,7 +28,9 @@ struct PiaKeysCard<Content: View>: View {
         content
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            // An opaque dynamic color keeps the card appearance while
+            // avoiding a live blur pass for every card during scrolling.
+            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .stroke(Color(uiColor: .separator).opacity(0.28), lineWidth: 0.8)
@@ -51,7 +53,7 @@ struct StatusCapsule: View {
         .foregroundStyle(connected ? .green : PiaKeysTheme.purple)
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .background(.thinMaterial, in: Capsule())
+        .background(Color(uiColor: .systemBackground), in: Capsule())
         .overlay { Capsule().stroke(Color(uiColor: .separator).opacity(0.28), lineWidth: 0.8) }
         .accessibilityElement(children: .combine)
     }
