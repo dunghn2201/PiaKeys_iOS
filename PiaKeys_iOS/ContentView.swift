@@ -15,6 +15,7 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { viewModel.suspendPlayback() }
         }
+        .background { PiaKeysBackground() }
         .tint(PiaKeysTheme.purple)
         .preferredColorScheme(viewModel.appearance.colorScheme)
     }

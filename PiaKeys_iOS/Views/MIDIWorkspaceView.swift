@@ -15,9 +15,17 @@ struct MIDIWorkspaceView: View {
     let requestScoreImport: () -> Void
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showingFullKeyboard = false
+    @State private var compactKeyboardFirstNote = Self.defaultCompactKeyboardFirstNote
     @State private var scoreContentHeight: CGFloat = 180
     @State private var sheetDetail: SheetDetail?
+
+    private static let compactKeyboardMinimumNote = 21
+    private static let compactKeyboardMaximumNote = 108
+    private static let compactKeyboardSpan = 24
+    private static let compactKeyboardEdgePadding = 4
+    private static let defaultCompactKeyboardFirstNote = 48
 
     private var copy: LocalizedCopy { .init(language: viewModel.language) }
     private var activeEvent: MIDINoteEvent? { viewModel.activeNoteEvent }
@@ -61,7 +69,9 @@ struct MIDIWorkspaceView: View {
                         Label(copy.setup, systemImage: "gearshape")
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderedProminent)
+                    .tint(PiaKeysTheme.purple)
+                    .foregroundStyle(.white)
                 }
             case .songStudio:
                 songPlayerCard
@@ -112,7 +122,7 @@ struct MIDIWorkspaceView: View {
                     VStack(spacing: 0) {
                         Text(activeEvent?.noteName ?? "—")
                             .font(.title2.weight(.bold))
-                        Text(activeEvent?.solfegeName ?? "—")
+                        Text(activeEvent.map { copy.solfegeName(for: $0.noteNumber) } ?? "—")
                             .font(.subheadline)
                     }
                     .foregroundStyle(PiaKeysTheme.purple)
@@ -122,32 +132,46 @@ struct MIDIWorkspaceView: View {
                 }
 
                 HStack(spacing: 8) {
-                    MetricPill(title: copy.source, value: viewModel.inputSourceLabel)
+                    MetricPill(
+                        title: copy.source,
+                        value: copy.sourceName(viewModel.activeNoteEvent?.source ?? (viewModel.visibleWiredSources.isEmpty ? nil : .wired))
+                    )
                     MetricPill(title: copy.velocity, value: "\(activeEvent?.velocity ?? 0)")
-                    MetricPill(title: copy.event, value: activeEvent?.type.rawValue ?? "—")
+                    MetricPill(title: copy.event, value: copy.eventName(activeEvent?.type))
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text(copy.recentNotes).font(.caption).foregroundStyle(.secondary)
-                    if recentNoteEvents.isEmpty {
-                        Text(copy.noNotes).font(.subheadline).foregroundStyle(.secondary)
-                    } else {
-                        ScrollView(.horizontal) {
-                            HStack(spacing: 8) {
-                                ForEach(recentNoteEvents) { event in
-                                    VStack(spacing: 2) {
-                                        Text(event.noteName).font(.subheadline.weight(.semibold))
-                                        Text("#\(event.noteNumber)").font(.caption2).foregroundStyle(.secondary)
+                    Group {
+                        if recentNoteEvents.isEmpty {
+                            Text(copy.noNotes)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            ScrollView(.horizontal) {
+                                HStack(spacing: 8) {
+                                    ForEach(recentNoteEvents) { event in
+                                        VStack(spacing: 2) {
+                                            Text(event.noteName).font(.subheadline.weight(.semibold))
+                                            Text("#\(event.noteNumber)").font(.caption2).foregroundStyle(.secondary)
+                                        }
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 7)
+                                        .background(
+                                            colorScheme == .dark
+                                                ? PiaKeysTheme.darkInsetSurface
+                                                : PiaKeysTheme.paleBlue.opacity(0.8),
+                                            in: RoundedRectangle(cornerRadius: 10)
+                                        )
+                                        .overlay { RoundedRectangle(cornerRadius: 10).stroke(PiaKeysTheme.gold.opacity(0.65)) }
                                     }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 7)
-                                    .background(PiaKeysTheme.paleBlue.opacity(0.8), in: RoundedRectangle(cornerRadius: 10))
-                                    .overlay { RoundedRectangle(cornerRadius: 10).stroke(PiaKeysTheme.gold.opacity(0.65)) }
                                 }
                             }
+                            .scrollIndicators(.hidden)
                         }
-                        .scrollIndicators(.hidden)
                     }
+                    .frame(height: 48, alignment: .leading)
                 }
             }
         }
@@ -305,7 +329,8 @@ struct MIDIWorkspaceView: View {
                             SongStaffPreview(
                                 song: viewModel.selectedSong,
                                 positionMilliseconds: milliseconds,
-                                activeNotes: viewModel.activeSongNotes
+                                activeNotes: viewModel.activeSongNotes,
+                                language: viewModel.language
                             )
                         }
                         openSheetHint
@@ -332,7 +357,8 @@ struct MIDIWorkspaceView: View {
                             MusicXMLScoreView(
                                 url: url,
                                 positionMilliseconds: milliseconds,
-                                contentHeight: $scoreContentHeight
+                                contentHeight: $scoreContentHeight,
+                                language: viewModel.language
                             )
                             .allowsHitTesting(false)
                         }
@@ -365,19 +391,28 @@ struct MIDIWorkspaceView: View {
                     SectionTitle(title: copy.keyboard, symbol: "pianokeys")
                     Spacer()
                     if let displayNote {
-                        Text("\(displayNote.noteName) / \(displayNote.solfegeName)")
+                        Text("\(displayNote.noteName) / \(copy.solfegeName(for: displayNote))")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(PiaKeysTheme.purple)
                     }
                 }
 
-                if let chord = ChordRecognizer.recognize(combinedActiveNotes) {
-                    Label(chord.symbol, systemImage: "music.note")
-                        .font(.headline)
-                        .foregroundStyle(PiaKeysTheme.gold)
-                } else {
-                    Text(copy.noChord).font(.caption).foregroundStyle(.secondary)
+                Group {
+                    if let chord = ChordRecognizer.recognize(combinedActiveNotes) {
+                        Label(chord.symbol, systemImage: "music.note")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(PiaKeysTheme.gold)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    } else {
+                        Text(copy.noChord)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
                 }
+                .frame(height: 24, alignment: .leading)
 
                 Button {
                     showingFullKeyboard = true
@@ -386,19 +421,69 @@ struct MIDIWorkspaceView: View {
                 }
                 .buttonStyle(.bordered)
 
-                Toggle(copy.fullKeyboardHint, isOn: $viewModel.showFullKeyboard)
-                    .font(.subheadline)
-
                 PianoKeyboardView(
                     activeNotes: combinedActiveNotes,
-                    height: viewModel.showFullKeyboard ? 112 : 175,
-                    fitToWidth: viewModel.showFullKeyboard,
+                    firstNote: compactKeyboardFirstNote,
+                    lastNote: compactKeyboardLastNote,
+                    height: 128,
+                    fitToWidth: true,
+                    language: copy.language,
                     onNoteOn: viewModel.beginPreviewNote,
                     onNoteOff: viewModel.endPreviewNote
                 )
                 .equatable()
+                .animation(.easeInOut(duration: 0.24), value: compactKeyboardFirstNote)
             }
         }
+        .onAppear {
+            updateCompactKeyboardWindow(for: compactKeyboardNotes)
+        }
+        .onChange(of: combinedActiveNotes) { _, _ in
+            updateCompactKeyboardWindow(for: compactKeyboardNotes)
+        }
+        .onChange(of: displayNote) { _, _ in
+            updateCompactKeyboardWindow(for: compactKeyboardNotes)
+        }
+    }
+
+    private var compactKeyboardNotes: Set<Int> {
+        var notes = combinedActiveNotes
+        if let displayNote { notes.insert(displayNote) }
+        return notes
+    }
+
+    private var compactKeyboardLastNote: Int {
+        min(
+            Self.compactKeyboardMaximumNote,
+            compactKeyboardFirstNote + Self.compactKeyboardSpan
+        )
+    }
+
+    private func updateCompactKeyboardWindow(for activeNotes: Set<Int>) {
+        guard let minimumNote = activeNotes.min(), let maximumNote = activeNotes.max() else { return }
+
+        let lowerEdge = compactKeyboardFirstNote + Self.compactKeyboardEdgePadding
+        let upperEdge = compactKeyboardLastNote - Self.compactKeyboardEdgePadding
+        guard minimumNote < lowerEdge || maximumNote > upperEdge else { return }
+
+        let centerNote = (minimumNote + maximumNote) / 2
+        let unalignedStart = centerNote - Self.compactKeyboardSpan / 2
+        let alignedStart = unalignedStart - positiveRemainder(unalignedStart, modulus: 12)
+        let maximumStart = Self.compactKeyboardMaximumNote - Self.compactKeyboardSpan
+        let nextStart = min(
+            max(Self.compactKeyboardMinimumNote, alignedStart),
+            maximumStart
+        )
+
+        guard nextStart != compactKeyboardFirstNote else { return }
+        withAnimation(.easeInOut(duration: 0.24)) {
+            compactKeyboardFirstNote = nextStart
+        }
+    }
+
+    private func positiveRemainder(_ value: Int, modulus: Int) -> Int {
+        let remainder = value % modulus
+        return remainder >= 0 ? remainder : remainder + modulus
     }
 
     private var libraryCard: some View {
@@ -454,17 +539,17 @@ struct MIDIWorkspaceView: View {
                 SectionTitle(title: copy.outputRoute, symbol: "arrow.triangle.branch")
                 Picker(copy.outputRoute, selection: $viewModel.songOutputRoute) {
                     ForEach(SongOutputRoute.allCases) { route in
-                        Text(route.rawValue).tag(route)
+                        Text(copy.outputRouteName(route)).tag(route)
                     }
                 }
                 .pickerStyle(.inline)
                 .labelsHidden()
 
                 if viewModel.songOutputRoute == .wired && !viewModel.canSendWiredMIDI {
-                    unavailableOutputButton("No wired MIDI output")
+                    unavailableOutputButton(copy.noWiredMIDIOutput)
                 }
                 if viewModel.songOutputRoute == .ble && !viewModel.canSendBLEMIDI {
-                    unavailableOutputButton("Bluetooth MIDI output is not ready")
+                    unavailableOutputButton(copy.bluetoothOutputNotReady)
                 }
             }
         }
@@ -533,13 +618,14 @@ private struct SheetMusicDetailView: View {
                                 height: 420,
                                 showsAllPages: false,
                                 page: scorePage,
+                                language: copy.language,
                                 onPageCount: updatePageCount,
                                 onPageChange: updatePage
                             )
                             .padding(.horizontal)
                             pageControls
                         } else {
-                            ContentUnavailableView("No sheet music", systemImage: "music.note.list")
+                            ContentUnavailableView(copy.noSheetMusic, systemImage: "music.note.list")
                         }
                     }
                 case let .musicXML(url):
@@ -551,6 +637,7 @@ private struct SheetMusicDetailView: View {
                             heightRange: 360...620,
                             showsAllPages: false,
                             page: scorePage,
+                            language: copy.language,
                             onPageCount: updatePageCount,
                             onPageChange: updatePage
                         )
@@ -617,42 +704,164 @@ private struct FullKeyboardView: View {
     @ObservedObject var viewModel: MainViewModel
     let onDone: () -> Void
 
+    @State private var scrollProgress: CGFloat = 0
+    @State private var scrollTargetNote = 48
+    @State private var scrollRequestID = 0
+    @State private var scrollAnimationDuration = 0.12
+
+    private static let firstNote = 21
+    private static let lastNote = 108
+    private static let whiteKeyWidth: CGFloat = 52
+
+    private var copy: LocalizedCopy { .init(language: viewModel.language) }
+    private var notes: [Int] { Array(Self.firstNote...Self.lastNote) }
+    private var whiteNotes: [Int] { notes.filter { !$0.isBlackPianoKey } }
+
     var body: some View {
         GeometryReader { proxy in
-            let rowHeight = max(130, (proxy.size.height - 76) / 2)
-            VStack(spacing: 12) {
-                HStack {
-                    Text("88-key piano")
-                        .font(.headline)
-                    Spacer()
-                    Button("Done", action: onDone)
-                        .buttonStyle(.bordered)
+            let keyboardWidth = max(1, proxy.size.width - 32)
+            let controlsHeight: CGFloat = 44
+            let overviewHeight: CGFloat = 48
+            let verticalSpacing: CGFloat = 6
+            let verticalInset: CGFloat = 6
+            let reservedHeight = controlsHeight + overviewHeight + 2 * (verticalSpacing + verticalInset)
+            let keyboardHeight = max(96, proxy.size.height - reservedHeight)
+            let viewportFraction = min(
+                1,
+                keyboardWidth / (CGFloat(whiteNotes.count) * Self.whiteKeyWidth)
+            )
+            let visibleRange = visibleNoteRange(viewportWidth: keyboardWidth)
+            let rangeLabel = "\(visibleRange.lowerBound.noteName) – \(visibleRange.upperBound.noteName)"
+
+            VStack(spacing: verticalSpacing) {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(copy.fullPiano)
+                            .font(.headline)
+                            .lineLimit(1)
+                        Text(rangeLabel)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 4)
+
+                    Button {
+                        moveViewport(byOctaves: -1, viewportWidth: keyboardWidth)
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.body.weight(.semibold))
+                            .frame(width: controlsHeight, height: controlsHeight)
+                            .background(Color(uiColor: .secondarySystemBackground), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(copy.lowerOctave)
+
+                    Button {
+                        moveViewport(byOctaves: 1, viewportWidth: keyboardWidth)
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.body.weight(.semibold))
+                            .frame(width: controlsHeight, height: controlsHeight)
+                            .background(Color(uiColor: .secondarySystemBackground), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(copy.higherOctave)
+
+                    Button(copy.close, action: onDone)
+                        .buttonStyle(.borderedProminent)
+                        .tint(PiaKeysTheme.purple)
+                        .frame(height: controlsHeight)
                 }
 
                 PianoKeyboardView(
                     activeNotes: viewModel.heldNoteNumbers.union(viewModel.activeSongNotes),
-                    firstNote: 21,
-                    lastNote: 64,
-                    height: rowHeight,
-                    fitToWidth: true,
+                    firstNote: Self.firstNote,
+                    lastNote: Self.lastNote,
+                    height: keyboardHeight,
+                    language: copy.language,
+                    naturalKeyWidth: Self.whiteKeyWidth,
+                    scrollToNote: scrollTargetNote,
+                    scrollRequestID: scrollRequestID,
+                    scrollAnimationDuration: scrollAnimationDuration,
+                    onScrollProgress: { progress in
+                        if abs(progress - scrollProgress) > 0.001 {
+                            scrollProgress = progress
+                        }
+                    },
                     onNoteOn: viewModel.beginPreviewNote,
                     onNoteOff: viewModel.endPreviewNote
                 )
                 .equatable()
-                PianoKeyboardView(
-                    activeNotes: viewModel.heldNoteNumbers.union(viewModel.activeSongNotes),
-                    firstNote: 65,
-                    lastNote: 108,
-                    height: rowHeight,
-                    fitToWidth: true,
-                    onNoteOn: viewModel.beginPreviewNote,
-                    onNoteOff: viewModel.endPreviewNote
-                )
-                .equatable()
+
+                HStack(spacing: 7) {
+                    Text(Self.firstNote.noteName)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+
+                    PianoKeyboardOverviewView(
+                        activeNotes: viewModel.heldNoteNumbers.union(viewModel.activeSongNotes),
+                        progress: scrollProgress,
+                        viewportFraction: viewportFraction,
+                        rangeLabel: rangeLabel,
+                        language: copy.language,
+                        onSeek: { progress in seek(to: progress, viewportWidth: keyboardWidth) },
+                        onAdjust: { octaves in moveViewport(byOctaves: octaves, viewportWidth: keyboardWidth) }
+                    )
+
+                    Text(Self.lastNote.noteName)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .frame(height: overviewHeight)
             }
-            .padding()
+            .padding(.horizontal, 16)
+            .padding(.vertical, verticalInset)
         }
-        .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+        .ignoresSafeArea(.container, edges: .vertical)
+        .background { PiaKeysBackground() }
+    }
+
+    private func maximumFirstWhiteIndex(viewportWidth: CGFloat) -> Int {
+        let visibleWhiteCount = max(1, Int(floor(viewportWidth / Self.whiteKeyWidth)))
+        return max(0, whiteNotes.count - visibleWhiteCount)
+    }
+
+    private func currentFirstWhiteIndex(viewportWidth: CGFloat) -> Int {
+        let maximumIndex = maximumFirstWhiteIndex(viewportWidth: viewportWidth)
+        return min(max(Int((scrollProgress * CGFloat(maximumIndex)).rounded()), 0), maximumIndex)
+    }
+
+    private func visibleNoteRange(viewportWidth: CGFloat) -> ClosedRange<Int> {
+        let maximumIndex = maximumFirstWhiteIndex(viewportWidth: viewportWidth)
+        let firstIndex = min(max(Int((scrollProgress * CGFloat(maximumIndex)).rounded()), 0), maximumIndex)
+        let visibleWhiteCount = max(1, Int(ceil(viewportWidth / Self.whiteKeyWidth)))
+        let lastIndex = min(whiteNotes.count - 1, firstIndex + visibleWhiteCount - 1)
+        return whiteNotes[firstIndex]...whiteNotes[lastIndex]
+    }
+
+    private func moveViewport(byOctaves octaves: Int, viewportWidth: CGFloat) {
+        let maximumIndex = maximumFirstWhiteIndex(viewportWidth: viewportWidth)
+        let nextIndex = min(
+            max(currentFirstWhiteIndex(viewportWidth: viewportWidth) + (octaves * 7), 0),
+            maximumIndex
+        )
+        requestScroll(toWhiteIndex: nextIndex, animationDuration: 0.22)
+    }
+
+    private func seek(to progress: CGFloat, viewportWidth: CGFloat) {
+        let maximumIndex = maximumFirstWhiteIndex(viewportWidth: viewportWidth)
+        let nextIndex = min(max(Int((progress * CGFloat(maximumIndex)).rounded()), 0), maximumIndex)
+        requestScroll(toWhiteIndex: nextIndex, animationDuration: 0.08)
+    }
+
+    private func requestScroll(toWhiteIndex index: Int, animationDuration: Double) {
+        let targetNote = whiteNotes[min(max(index, 0), whiteNotes.count - 1)]
+        guard targetNote != scrollTargetNote else { return }
+        scrollAnimationDuration = animationDuration
+        scrollTargetNote = targetNote
+        scrollRequestID &+= 1
     }
 }
 
@@ -697,6 +906,8 @@ private struct LandscapeKeyboardPresenter: UIViewControllerRepresentable {
         }
 
         func updatePresentation() {
+            keyboard?.overrideUserInterfaceStyle = keyboardInterfaceStyle
+
             if isPresented.wrappedValue {
                 guard !isDismissing else { return }
                 presentKeyboardIfNeeded()
@@ -728,6 +939,9 @@ private struct LandscapeKeyboardPresenter: UIViewControllerRepresentable {
                     self?.dismissKeyboard()
                 }
             )
+            // This controller is outside ContentView's SwiftUI environment, so
+            // mirror the app-level appearance through UIKit's trait collection.
+            keyboard.overrideUserInterfaceStyle = keyboardInterfaceStyle
             self.keyboard = keyboard
             keyboard.modalPresentationStyle = .fullScreen
             presenter.present(keyboard, animated: true) { [weak self, weak keyboard] in
@@ -793,6 +1007,14 @@ private struct LandscapeKeyboardPresenter: UIViewControllerRepresentable {
             }
             portraitResetWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
+        }
+
+        private var keyboardInterfaceStyle: UIUserInterfaceStyle {
+            switch viewModel.appearance {
+            case .system: .unspecified
+            case .light: .light
+            case .dark: .dark
+            }
         }
     }
 }

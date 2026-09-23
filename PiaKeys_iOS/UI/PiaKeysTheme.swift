@@ -5,6 +5,26 @@ enum PiaKeysTheme {
     static let purple = Color(red: 0.52, green: 0.32, blue: 1.0)
     static let navy = Color(red: 0.04, green: 0.11, blue: 0.20)
     static let paleBlue = Color(red: 0.91, green: 0.94, blue: 0.98)
+    static let darkInsetSurface = Color(red: 0.10, green: 0.14, blue: 0.25)
+}
+
+/// Displays the user-provided light or dark musical background for the app.
+///
+/// The asset catalog contains luminosity variants under one image name, so
+/// SwiftUI selects the matching artwork for `.system`, `.light`, and `.dark`
+/// appearance settings without duplicating theme logic in each screen.
+struct PiaKeysBackground: View {
+    var body: some View {
+        GeometryReader { proxy in
+            Image("PiaKeysBackground")
+                .resizable()
+                .scaledToFill()
+                .frame(width: proxy.size.width, height: proxy.size.height)
+                .clipped()
+        }
+        .ignoresSafeArea()
+        .accessibilityHidden(true)
+    }
 }
 
 extension AppAppearance {
@@ -63,6 +83,8 @@ struct MetricPill: View {
     let title: String
     let value: String
 
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(title).font(.caption2).foregroundStyle(.secondary)
@@ -71,7 +93,16 @@ struct MetricPill: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(PiaKeysTheme.paleBlue.opacity(0.52), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(
+            colorScheme == .dark
+                ? PiaKeysTheme.darkInsetSurface
+                : PiaKeysTheme.paleBlue.opacity(0.52),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(colorScheme == .dark ? 0.08 : 0), lineWidth: 0.8)
+        }
     }
 }
 

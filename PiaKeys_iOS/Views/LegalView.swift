@@ -6,61 +6,70 @@ import SwiftUI
 /// the policy and third-party notices without requiring them to discover the
 /// website independently.
 struct LegalView: View {
+    let language: PiaKeysLanguage
     @Environment(\.dismiss) private var dismiss
+
+    init(language: PiaKeysLanguage = .english) {
+        self.language = language
+    }
+
+    private var copy: LocalizedCopy { .init(language: language) }
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    Text("PiaKeys processes MIDI input, audio playback, imported songs, and MusicXML scores on this device. The current build has no account, advertising, analytics, or developer-hosted upload.")
+                    Text(copy.legalPrivacyDescription)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
 
-                Section("PiaKeys links") {
+                Section(copy.piaKeysLinks) {
                     Link(destination: PiaKeysLegal.privacyURL) {
-                        Label("Privacy Policy", systemImage: "hand.raised")
+                        Label(copy.privacyPolicy, systemImage: "hand.raised")
                     }
                     Link(destination: PiaKeysLegal.supportURL) {
-                        Label("Support", systemImage: "questionmark.circle")
+                        Label(copy.support, systemImage: "questionmark.circle")
                     }
                     Link(destination: PiaKeysLegal.licensesURL) {
-                        Label("Licenses & sources", systemImage: "doc.text.magnifyingglass")
+                        Label(copy.licensesSources, systemImage: "doc.text.magnifyingglass")
                     }
                 }
 
-                Section("Bundled third-party sources") {
+                Section(copy.bundledSources) {
                     Link(destination: PiaKeysLegal.pianoSamplesURL) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("Upright Piano KW samples")
-                            Text("FreePats · CC0 1.0").font(.caption).foregroundStyle(.secondary)
+                            Text(copy.uprightPianoSamples)
+                            Text(copy.freePatsLicense).font(.caption).foregroundStyle(.secondary)
                         }
                     }
                     Link(destination: PiaKeysLegal.verovioURL) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("Verovio score renderer")
-                            Text("LGPL · see upstream COPYING and COPYING.LESSER").font(.caption).foregroundStyle(.secondary)
+                            Text(copy.verovioRenderer)
+                            Text(copy.verovioLicense).font(.caption).foregroundStyle(.secondary)
                         }
                     }
                     Link(destination: PiaKeysLegal.awesomeSheetMusicURL) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("awesome-sheet-music")
-                            Text("Curated directory; not a blanket license for linked scores").font(.caption).foregroundStyle(.secondary)
+                            Text(copy.awesomeSheetMusic)
+                            Text(copy.awesomeSheetMusicDescription).font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
 
-                Section("MIDI files") {
-                    Text("The built-in PiaKeys Waltz Study is generated in-app. PiaKeys does not bundle a third-party MIDI catalog. When importing a .mid or .midi file, use only material you are allowed to use and share.")
+                Section(copy.midiFiles) {
+                    Text(copy.midiFilesDescription)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("Legal & sources")
+            .scrollContentBackground(.hidden)
+            .background { PiaKeysBackground() }
+            .navigationTitle(copy.licensesSources)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+                    Button(copy.close) { dismiss() }
                 }
             }
         }

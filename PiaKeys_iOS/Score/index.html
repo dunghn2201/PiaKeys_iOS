@@ -16,6 +16,11 @@
   <div id="score"><div id="message">Loading score...</div></div>
   <script>
     let toolkit = null;
+    let scoreStrings = {
+      loading: 'Loading score...',
+      unableRead: 'Unable to read this MusicXML score.',
+      unableRender: 'Unable to render this MusicXML score.'
+    };
     let pendingScore = null;
     let currentPage = 1;
     let highlightedIds = [];
@@ -32,6 +37,14 @@
     function showMessage(message) {
       document.getElementById('score').innerHTML = '<div id="message">' + message + '</div>';
     }
+
+    window.setScoreStrings = function(strings) {
+      scoreStrings = Object.assign(scoreStrings, strings || {});
+      const message = document.getElementById('message');
+      if (message && message.textContent === 'Loading score...') {
+        message.textContent = scoreStrings.loading;
+      }
+    };
 
     function reportRenderStatus(token, success, message) {
       if (!window.webkit || !window.webkit.messageHandlers.scoreStatus) return;
@@ -161,8 +174,8 @@
             ));
         if (!loaded) {
           console.error('Verovio rejected the MusicXML score');
-          showMessage('Unable to read this MusicXML score.');
-          reportRenderStatus(token, false, 'Unable to read this MusicXML score.');
+          showMessage(scoreStrings.unableRead);
+          reportRenderStatus(token, false, scoreStrings.unableRead);
           return;
         }
         renderScorePages(allPages, requestedPage || 1);
@@ -170,8 +183,8 @@
         reportRenderStatus(token, true, '');
       } catch (error) {
         console.error('MusicXML rendering failed: ' + error);
-        showMessage('Unable to render this MusicXML score.');
-        reportRenderStatus(token, false, 'Unable to render this MusicXML score.');
+        showMessage(scoreStrings.unableRender);
+        reportRenderStatus(token, false, scoreStrings.unableRender);
       }
     }
 

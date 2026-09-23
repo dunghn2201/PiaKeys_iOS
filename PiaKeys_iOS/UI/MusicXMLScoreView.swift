@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import WebKit
 
@@ -7,6 +8,7 @@ struct MusicXMLScoreView: UIViewRepresentable {
     let url: URL?
     let data: Data?
     let positionMilliseconds: Int64
+    var language: PiaKeysLanguage = .english
     @Binding var contentHeight: CGFloat
     var heightRange: ClosedRange<CGFloat> = 120...420
     var showsAllPages = false
@@ -21,12 +23,14 @@ struct MusicXMLScoreView: UIViewRepresentable {
         heightRange: ClosedRange<CGFloat> = 120...420,
         showsAllPages: Bool = false,
         page: Int = 1,
+        language: PiaKeysLanguage = .english,
         onPageCount: ((Int) -> Void)? = nil,
         onPageChange: ((Int) -> Void)? = nil
     ) {
         self.url = url
         data = nil
         self.positionMilliseconds = positionMilliseconds
+        self.language = language
         _contentHeight = contentHeight
         self.heightRange = heightRange
         self.showsAllPages = showsAllPages
@@ -42,12 +46,14 @@ struct MusicXMLScoreView: UIViewRepresentable {
         heightRange: ClosedRange<CGFloat> = 120...420,
         showsAllPages: Bool = false,
         page: Int = 1,
+        language: PiaKeysLanguage = .english,
         onPageCount: ((Int) -> Void)? = nil,
         onPageChange: ((Int) -> Void)? = nil
     ) {
         url = nil
         self.data = data
         self.positionMilliseconds = positionMilliseconds
+        self.language = language
         _contentHeight = contentHeight
         self.heightRange = heightRange
         self.showsAllPages = showsAllPages
@@ -62,6 +68,7 @@ struct MusicXMLScoreView: UIViewRepresentable {
             heightRange: heightRange,
             showsAllPages: showsAllPages,
             page: page,
+            language: language,
             onPageCount: onPageCount,
             onPageChange: onPageChange
         )
@@ -96,6 +103,12 @@ struct MusicXMLScoreView: UIViewRepresentable {
         context.coordinator.heightRange = heightRange
         context.coordinator.onPageCount = onPageCount
         context.coordinator.onPageChange = onPageChange
+        if context.coordinator.language != language {
+            context.coordinator.language = language
+            if context.coordinator.pageLoaded {
+                context.coordinator.applyLocalizedStrings()
+            }
+        }
         if context.coordinator.scoreURL != url ||
             context.coordinator.scoreData != data ||
             context.coordinator.showsAllPages != showsAllPages {
@@ -129,7 +142,8 @@ struct MusicXMLScoreView: UIViewRepresentable {
         let indexURL = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "Score")
             ?? Bundle.main.url(forResource: "index", withExtension: "html")
         guard let indexURL else {
-            webView.loadHTMLString("<p style='font: -apple-system-body; color: #777'>Score renderer is unavailable.</p>", baseURL: nil)
+            let message = LocalizedCopy(language: language).scoreRendererUnavailable
+            webView.loadHTMLString("<p style='font: -apple-system-body; color: #777'>\(message)</p>", baseURL: nil)
             return
         }
         webView.loadFileURL(indexURL, allowingReadAccessTo: indexURL.deletingLastPathComponent())
@@ -151,6 +165,7 @@ struct MusicXMLScoreView: UIViewRepresentable {
         var heightRange: ClosedRange<CGFloat>
         var showsAllPages: Bool
         var page: Int
+        var language: PiaKeysLanguage
         var renderedPage = 0
         var onPageCount: ((Int) -> Void)?
         var onPageChange: ((Int) -> Void)?
@@ -160,6 +175,7 @@ struct MusicXMLScoreView: UIViewRepresentable {
             heightRange: ClosedRange<CGFloat>,
             showsAllPages: Bool,
             page: Int,
+            language: PiaKeysLanguage,
             onPageCount: ((Int) -> Void)?,
             onPageChange: ((Int) -> Void)?
         ) {
@@ -167,13 +183,29 @@ struct MusicXMLScoreView: UIViewRepresentable {
             self.heightRange = heightRange
             self.showsAllPages = showsAllPages
             self.page = max(1, page)
+            self.language = language
             self.onPageCount = onPageCount
             self.onPageChange = onPageChange
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             pageLoaded = true
+            applyLocalizedStrings()
             renderScoreIfNeeded()
+        }
+
+        func applyLocalizedStrings() {
+            guard let webView,
+                  let data = try? JSONSerialization.data(
+                      withJSONObject: [
+                          "loading": LocalizedCopy(language: language).loadingScore,
+                          "unableRead": LocalizedCopy(language: language).unableReadScore,
+                          "unableRender": LocalizedCopy(language: language).unableRenderScore
+                      ],
+                      options: [.fragmentsAllowed]
+                  ),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            webView.evaluateJavaScript("window.setScoreStrings(\(json));")
         }
 
         func updatePlaybackTime(_ milliseconds: Int64) {

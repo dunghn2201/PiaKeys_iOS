@@ -199,7 +199,12 @@ final class CoreMIDIManager: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private nonisolated static func isNetworkSession(_ value: String) -> Bool {
+    /// Identifies Apple's always-present virtual Network Session endpoints.
+    ///
+    /// iOS can expose these endpoints even when no user MIDI device is
+    /// connected. They remain available internally for Core MIDI matching,
+    /// but should not be presented as a connected device in user-facing UI.
+    nonisolated static func isNetworkSession(_ value: String) -> Bool {
         normalizedName(value).replacingOccurrences(of: " ", with: "").hasPrefix("networksession")
     }
 

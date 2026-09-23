@@ -14,7 +14,7 @@ struct MIDIMonitorRootView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 14) {
-                    if !viewModel.bleStatus.isConnected && viewModel.wiredSources.isEmpty {
+                    if !viewModel.bleStatus.isConnected && viewModel.visibleWiredSources.isEmpty {
                         quickSetupCard
                     }
                     MIDIWorkspaceView(
@@ -28,19 +28,17 @@ struct MIDIMonitorRootView: View {
                 .padding(.bottom, 24)
             }
             .background {
-                LinearGradient(
-                    colors: [Color(uiColor: .systemBackground), PiaKeysTheme.paleBlue.opacity(0.32), Color(uiColor: .systemBackground)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .ignoresSafeArea()
+                PiaKeysBackground()
             }
             .navigationTitle(copy.midiMonitor)
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     StatusCapsule(
-                        text: viewModel.overallConnectionLabel,
+                        text: copy.overallConnectionLabel(
+                            status: viewModel.bleStatus,
+                            hasExternalMIDI: viewModel.hasExternalMIDIConnection
+                        ),
                         connected: viewModel.hasExternalMIDIConnection
                     )
                 }
@@ -68,6 +66,7 @@ struct MIDIMonitorRootView: View {
                         .padding(.horizontal)
                         .padding(.bottom, 24)
                     }
+                    .background { PiaKeysBackground() }
                     .navigationTitle(copy.songStudio)
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
@@ -105,13 +104,13 @@ struct MIDIMonitorRootView: View {
                     }
                 }
                 .alert(
-                    "PiaKeys",
+                    copy.appName,
                     isPresented: Binding(
                         get: { viewModel.importMessage != nil },
                         set: { if !$0 { viewModel.clearImportMessage() } }
                     )
                 ) {
-                    Button("OK") { viewModel.clearImportMessage() }
+                    Button(copy.ok) { viewModel.clearImportMessage() }
                 } message: {
                     Text(viewModel.importMessage ?? "")
                 }
@@ -124,6 +123,7 @@ struct MIDIMonitorRootView: View {
                             .padding(.horizontal)
                             .padding(.bottom, 24)
                     }
+                    .background { PiaKeysBackground() }
                     .navigationTitle(copy.setup)
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {

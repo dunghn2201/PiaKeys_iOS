@@ -34,18 +34,19 @@ struct MetronomeView: View {
             .padding(.horizontal)
             .padding(.bottom, 24)
             .background {
-                LinearGradient(
-                    colors: [Color(uiColor: .systemBackground), PiaKeysTheme.paleBlue.opacity(0.3)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .ignoresSafeArea()
+                PiaKeysBackground()
             }
             .navigationTitle(copy.practiceTiming)
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    StatusCapsule(text: viewModel.overallConnectionLabel, connected: viewModel.hasExternalMIDIConnection)
+                    StatusCapsule(
+                        text: copy.overallConnectionLabel(
+                            status: viewModel.bleStatus,
+                            hasExternalMIDI: viewModel.hasExternalMIDIConnection
+                        ),
+                        connected: viewModel.hasExternalMIDIConnection
+                    )
                 }
             }
         }
@@ -136,8 +137,8 @@ struct MetronomeView: View {
             VStack(alignment: .leading, spacing: 14) {
                 SectionTitle(title: copy.soundProfile, symbol: "speaker.wave.2")
                 Picker(copy.soundProfile, selection: $viewModel.soundProfile) {
-                    Text("Woodblock").tag("Woodblock")
-                    Text("Digital").tag("Digital")
+                    Text(copy.woodblock).tag("Woodblock")
+                    Text(copy.digital).tag("Digital")
                 }
                 .pickerStyle(.segmented)
             }

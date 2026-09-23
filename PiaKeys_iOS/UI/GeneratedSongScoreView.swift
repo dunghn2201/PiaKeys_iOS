@@ -8,6 +8,7 @@ struct GeneratedSongScoreView: View {
     let height: CGFloat
     let showsAllPages: Bool
     let page: Int
+    let language: PiaKeysLanguage
     let onPageCount: ((Int) -> Void)?
     let onPageChange: ((Int) -> Void)?
 
@@ -20,6 +21,7 @@ struct GeneratedSongScoreView: View {
         height: CGFloat = 190,
         showsAllPages: Bool = false,
         page: Int = 1,
+        language: PiaKeysLanguage = .english,
         onPageCount: ((Int) -> Void)? = nil,
         onPageChange: ((Int) -> Void)? = nil
     ) {
@@ -28,6 +30,7 @@ struct GeneratedSongScoreView: View {
         self.height = height
         self.showsAllPages = showsAllPages
         self.page = max(1, page)
+        self.language = language
         self.onPageCount = onPageCount
         self.onPageChange = onPageChange
         _contentHeight = State(initialValue: max(120, height))
@@ -44,12 +47,13 @@ struct GeneratedSongScoreView: View {
                     heightRange: showsAllPages ? 360...60_000 : 120...420,
                     showsAllPages: showsAllPages,
                     page: page,
+                    language: language,
                     onPageCount: onPageCount,
                     onPageChange: onPageChange
                 )
                 .allowsHitTesting(false)
             } else {
-                ProgressView("Loading score…")
+                ProgressView(LocalizedCopy(language: language).loadingScore)
                     .frame(maxWidth: .infinity, minHeight: height)
             }
         }
@@ -58,7 +62,7 @@ struct GeneratedSongScoreView: View {
         .background(Color.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .animation(.easeInOut(duration: 0.2), value: contentHeight)
-        .accessibilityLabel("Generated piano sheet music")
+        .accessibilityLabel(LocalizedCopy(language: language).generatedPianoSheetMusic)
         .task(id: song.id) {
             let snapshot = song
             let data = await Task.detached(priority: .userInitiated) {

@@ -37,16 +37,21 @@ struct SetupView: View {
         PiaKeysCard {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
-                    SectionTitle(title: copy.bluetoothMIDI, subtitle: viewModel.bleStatus.message, symbol: "antenna.radiowaves.left.and.right")
+                    SectionTitle(
+                        title: copy.bluetoothMIDI,
+                        subtitle: copy.statusMessage(viewModel.bleStatus),
+                        symbol: "antenna.radiowaves.left.and.right"
+                    )
                     Spacer()
-                    StatusCapsule(text: viewModel.bleStatus.label, connected: viewModel.bleStatus.isConnected)
+                    StatusCapsule(text: copy.statusLabel(viewModel.bleStatus), connected: viewModel.bleStatus.isConnected)
                 }
 
                 HStack {
                     Spacer()
                     ScanPianoButton(
                         status: viewModel.bleStatus,
-                        tapFeedback: scanTapFeedback
+                        tapFeedback: scanTapFeedback,
+                        copy: copy
                     ) {
                         scanTapSequence += 1
                         let currentTap = scanTapSequence
@@ -71,7 +76,7 @@ struct SetupView: View {
                 Button {
                     showBluetoothMIDIPicker = true
                 } label: {
-                    Label("Open iOS Bluetooth MIDI", systemImage: "pianokeys")
+                    Label(copy.openBluetoothMIDI, systemImage: "pianokeys")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
@@ -79,9 +84,9 @@ struct SetupView: View {
                 if viewModel.bleStatus.isUnavailable {
                     Label {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(viewModel.bleStatus.message)
+                            Text(copy.statusMessage(viewModel.bleStatus))
                                 .font(.subheadline.weight(.semibold))
-                            Text("Enable Bluetooth from Control Center or Settings, then return here and tap Scan.")
+                            Text(copy.bluetoothHint)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -96,7 +101,7 @@ struct SetupView: View {
 
                 if viewModel.bleCompatibilityScanActive {
                     Label(
-                        "MIDI service was not advertised. Showing named nearby BLE devices for compatibility.",
+                        copy.compatibilityScanMessage,
                         systemImage: "antenna.radiowaves.left.and.right.circle"
                     )
                     .font(.caption)
@@ -106,13 +111,13 @@ struct SetupView: View {
                     .background(PiaKeysTheme.purple.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
                 }
 
-                Text("Available devices")
+                Text(copy.availableDevices)
                     .font(.headline)
                 if viewModel.bleDevices.isEmpty {
                     ContentUnavailableView(
-                        "No MIDI pianos",
+                        copy.noMIDIPianos,
                         systemImage: "pianokeys.inverse",
-                        description: Text("Turn on Bluetooth pairing mode, then tap Scan.")
+                        description: Text(copy.bluetoothPairingHint)
                     )
                     .frame(minHeight: 120)
                 } else {
@@ -122,10 +127,10 @@ struct SetupView: View {
                                 .foregroundStyle(PiaKeysTheme.purple)
                                 .frame(width: 28)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(device.name).font(.subheadline.weight(.semibold))
+                                Text(copy.deviceName(device.name)).font(.subheadline.weight(.semibold))
                                 HStack(spacing: 6) {
-                                    Text(device.signalStrength == 0 ? "Previously connected" : "\(device.signalStrength) dBm")
-                                    Text(device.advertisesMIDIService ? "MIDI" : "Nearby BLE")
+                                    Text(device.signalStrength == 0 ? copy.previouslyConnected : "\(device.signalStrength) dBm")
+                                    Text(device.advertisesMIDIService ? copy.midiReady : copy.nearbyBLE)
                                         .font(.caption2.weight(.semibold))
                                         .padding(.horizontal, 6)
                                         .padding(.vertical, 2)
@@ -135,7 +140,7 @@ struct SetupView: View {
                                 .foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Button("Connect") { viewModel.connectBLE(device.id) }
+                            Button(copy.connect) { viewModel.connectBLE(device.id) }
                                 .buttonStyle(.bordered)
                                 .disabled(viewModel.bleStatus.isConnected || viewModel.bleStatus.isConnectionInProgress)
                         }
@@ -169,18 +174,18 @@ struct SetupView: View {
                         .buttonStyle(.bordered)
                 }
 
-                if viewModel.wiredSources.isEmpty && viewModel.wiredDestinations.isEmpty {
-                    Label("No CoreMIDI devices connected", systemImage: "cable.connector.slash")
+                if viewModel.visibleWiredSources.isEmpty && viewModel.visibleWiredDestinations.isEmpty {
+                    Label(copy.noCoreMIDIDevices, systemImage: "cable.connector.slash")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 12)
                 }
 
-                ForEach(viewModel.wiredSources) { source in
-                    MIDIPortRow(name: source.name, direction: "Input", symbol: "arrow.down.circle.fill")
+                ForEach(viewModel.visibleWiredSources) { source in
+                    MIDIPortRow(name: copy.deviceName(source.name), direction: copy.input, status: copy.ready, symbol: "arrow.down.circle.fill")
                 }
-                ForEach(viewModel.wiredDestinations) { destination in
-                    MIDIPortRow(name: destination.name, direction: "Output", symbol: "arrow.up.circle.fill")
+                ForEach(viewModel.visibleWiredDestinations) { destination in
+                    MIDIPortRow(name: copy.deviceName(destination.name), direction: copy.output, status: copy.ready, symbol: "arrow.up.circle.fill")
                 }
             }
         }
@@ -189,7 +194,7 @@ struct SetupView: View {
     private var preferencesCard: some View {
         PiaKeysCard {
             VStack(alignment: .leading, spacing: 16) {
-                SectionTitle(title: "Preferences", symbol: "slider.horizontal.3")
+                SectionTitle(title: copy.preferences, symbol: "slider.horizontal.3")
 
                 Toggle(copy.audioFeedback, isOn: $viewModel.audioEnabled)
                 VStack(alignment: .leading, spacing: 4) {
@@ -206,7 +211,9 @@ struct SetupView: View {
                     .buttonStyle(.bordered)
 
                 Label(
-                    viewModel.pianoSampleStatus,
+                    viewModel.pianoSampleCount > 0
+                        ? copy.pianoSamplesReady(viewModel.pianoSampleCount)
+                        : copy.pianoSamplesUnavailable,
                     systemImage: viewModel.pianoSampleCount > 0 ? "waveform.circle.fill" : "exclamationmark.triangle.fill"
                 )
                 .font(.caption)
@@ -214,7 +221,7 @@ struct SetupView: View {
 
                 Divider()
                 Picker(copy.appearance, selection: $viewModel.appearance) {
-                    ForEach(AppAppearance.allCases) { mode in Text(mode.rawValue).tag(mode) }
+                    ForEach(AppAppearance.allCases) { mode in Text(copy.appearanceName(mode)).tag(mode) }
                 }
                 .pickerStyle(.segmented)
 
@@ -227,7 +234,7 @@ struct SetupView: View {
                 Button {
                     showLegal = true
                 } label: {
-                    Label("Privacy & licenses", systemImage: "doc.text.magnifyingglass")
+                    Label(copy.privacyLicenses, systemImage: "doc.text.magnifyingglass")
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.bordered)
@@ -245,10 +252,10 @@ struct SetupView: View {
             }
         }
         .sheet(isPresented: $showLegal) {
-            LegalView()
+            LegalView(language: viewModel.language)
         }
         .alert(copy.feedbackUnavailable, isPresented: $showFeedbackUnavailable) {
-            Button("OK", role: .cancel) {}
+            Button(copy.ok, role: .cancel) {}
         } message: {
             Text(copy.feedbackUnavailableMessage)
         }
@@ -265,8 +272,8 @@ struct SetupView: View {
         components.scheme = "mailto"
         components.path = "dunghn2201@gmail.com"
         components.queryItems = [
-            URLQueryItem(name: "subject", value: "PiaKeys iOS Feedback"),
-            URLQueryItem(name: "body", value: "\n\nApp version: \(appVersion)")
+            URLQueryItem(name: "subject", value: copy.feedbackSubject),
+            URLQueryItem(name: "body", value: "\n\n\(copy.feedbackBodyAppVersion): \(appVersion)")
         ]
 
         guard let url = components.url else {
@@ -283,7 +290,7 @@ struct SetupView: View {
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: 8) {
                     if viewModel.rawPackets.isEmpty {
-                        Text("Raw MIDI packets appear here.")
+                        Text(copy.rawMIDIPacketsHint)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -301,7 +308,7 @@ struct SetupView: View {
                 }
                 .padding(.top, 10)
             } label: {
-                SectionTitle(title: copy.diagnostics, subtitle: "Core MIDI packet log", symbol: "waveform.badge.magnifyingglass")
+                SectionTitle(title: copy.diagnostics, subtitle: copy.coreMIDIPacketLog, symbol: "waveform.badge.magnifyingglass")
             }
         }
     }
@@ -326,6 +333,7 @@ private struct BluetoothMIDIPickerView: UIViewControllerRepresentable {
 private struct MIDIPortRow: View {
     let name: String
     let direction: String
+    let status: String
     let symbol: String
 
     var body: some View {
@@ -336,7 +344,7 @@ private struct MIDIPortRow: View {
                 Text(direction).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            Text("Ready")
+            Text(status)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.green)
         }
@@ -347,20 +355,29 @@ private struct MIDIPortRow: View {
 private struct ScanPianoButton: View {
     let status: MIDIConnectionStatus
     let tapFeedback: Bool
+    let copy: LocalizedCopy
     let action: () -> Void
 
     private var animating: Bool { status.isBusy || tapFeedback }
 
     private var title: String {
         switch status {
-        case .preparingBluetooth: "Preparing"
-        case .scanning: "Scanning"
-        case .connecting: "Connecting"
-        case .discoveringServices: "Services"
-        case .enablingNotifications: "Subscribing"
-        case .connected: "Connected"
-        case .failed: "Scan again"
-        default: "Scan piano"
+        case .preparingBluetooth: copy.statusLabel(status)
+        case .scanning: copy.statusLabel(status)
+        case .connecting: copy.statusLabel(status)
+        case .discoveringServices: copy.statusLabel(status)
+        case .enablingNotifications: copy.statusLabel(status)
+        case .connected: value("Connected", "Đã kết nối", "接続済み")
+        case .failed: value("Scan again", "Quét lại", "再検索")
+        default: copy.scanPiano
+        }
+    }
+
+    private func value(_ english: String, _ vietnamese: String, _ japanese: String) -> String {
+        switch copy.language {
+        case .english: english
+        case .vietnamese: vietnamese
+        case .japanese: japanese
         }
     }
 
@@ -411,8 +428,8 @@ private struct ScanPianoButton: View {
             }
         }
         .buttonStyle(ScanPianoPressStyle())
-        .accessibilityLabel(status.isConnected ? "Disconnect piano" : status.isScanning ? "Stop scan" : "Scan for piano")
-        .accessibilityHint("Double tap to change the Bluetooth MIDI scan state")
+        .accessibilityLabel(status.isConnected ? copy.disconnect : status.isScanning ? copy.stopScan : copy.scanPiano)
+        .accessibilityHint(value("Double tap to change the Bluetooth MIDI scan state", "Chạm hai lần để đổi trạng thái quét Bluetooth MIDI", "ダブルタップしてBluetooth MIDIの検索状態を変更します"))
     }
 }
 

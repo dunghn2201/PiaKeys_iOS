@@ -79,17 +79,7 @@ enum MIDIConnectionStatus: Equatable, Sendable {
     case failed(String)
 
     var label: String {
-        switch self {
-        case .idle: "Ready"
-        case .preparingBluetooth: "Preparing"
-        case .scanning: "Scanning"
-        case .connecting: "Connecting"
-        case .discoveringServices: "Discovering"
-        case .enablingNotifications: "Subscribing"
-        case .connected: "Live"
-        case .unavailable: "Unavailable"
-        case .failed: "Error"
-        }
+        LocalizedCopy(language: .english).statusLabel(self)
     }
 
     var isConnected: Bool {
@@ -131,16 +121,7 @@ enum MIDIConnectionStatus: Equatable, Sendable {
     }
 
     var message: String {
-        switch self {
-        case .idle: "Ready to search for a Bluetooth MIDI piano."
-        case .preparingBluetooth: "Waiting for Bluetooth permission and radio readiness…"
-        case .scanning: "Searching for nearby BLE MIDI pianos…"
-        case let .connecting(name): "Connecting to \(name)…"
-        case let .discoveringServices(name): "Connected to \(name). Discovering MIDI services…"
-        case let .enablingNotifications(name): "Enabling MIDI notifications on \(name)…"
-        case let .connected(name, _): "Receiving MIDI from \(name)."
-        case let .unavailable(message), let .failed(message): message
-        }
+        LocalizedCopy(language: .english).statusMessage(self)
     }
 }
 
@@ -174,10 +155,15 @@ enum PracticeHandSelection: String, CaseIterable, Identifiable, Codable, Sendabl
     var id: Self { self }
 
     var label: String {
+        localizedLabel(in: .english)
+    }
+
+    func localizedLabel(in language: PiaKeysLanguage) -> String {
+        let copy = LocalizedCopy(language: language)
         switch self {
-        case .both: "Both hands"
-        case .left: "Left hand"
-        case .right: "Right hand"
+        case .both: return copy.bothHands
+        case .left: return copy.leftHand
+        case .right: return copy.rightHand
         }
     }
 
@@ -199,10 +185,15 @@ enum PracticeMode: String, CaseIterable, Identifiable, Codable, Sendable {
     var id: Self { self }
 
     var label: String {
+        localizedLabel(in: .english)
+    }
+
+    func localizedLabel(in language: PiaKeysLanguage) -> String {
+        let copy = LocalizedCopy(language: language)
         switch self {
-        case .playback: "Listen / play along"
-        case .waitForNote: "Wait for my note"
-        case .timed: "Play with timing"
+        case .playback: return copy.playAlong
+        case .waitForNote: return copy.waitForNote
+        case .timed: return copy.playWithTiming
         }
     }
 }

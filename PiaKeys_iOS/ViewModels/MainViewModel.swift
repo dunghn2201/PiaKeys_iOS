@@ -217,12 +217,12 @@ final class MainViewModel: ObservableObject {
             songs = try libraryStore.load()
             selectedSongID = songs.first?.id ?? PracticeSong.demo.id
         } catch {
-            importMessage = "Could not restore the song library: \(error.localizedDescription)"
+            importMessage = LocalizedCopy(language: language).restoreLibraryFailed(error.localizedDescription)
         }
         do {
             practiceHistory = try historyStore.load()
         } catch {
-            importMessage = importMessage ?? "Could not restore practice history: \(error.localizedDescription)"
+            importMessage = importMessage ?? LocalizedCopy(language: language).restoreHistoryFailed(error.localizedDescription)
         }
         audio.setVolume(audioVolume)
         bindManagers()
@@ -326,27 +326,32 @@ final class MainViewModel: ObservableObject {
     }
 
     var inputSourceLabel: String {
-        activeNoteEvent?.source.rawValue ?? (wiredSources.isEmpty ? "--" : "MIDI")
+        let source = activeNoteEvent?.source ?? (visibleWiredSources.isEmpty ? nil : .wired)
+        return LocalizedCopy(language: language).sourceName(source)
     }
 
     var overallConnectionLabel: String {
-        if bleStatus.isConnected || hasExternalWiredMIDI { return "MIDI Live" }
-        return bleStatus.label
+        LocalizedCopy(language: language).overallConnectionLabel(
+            status: bleStatus,
+            hasExternalMIDI: hasExternalWiredMIDI
+        )
     }
 
     var canSendWiredMIDI: Bool { coreMIDI.canSendNotes }
     var canSendBLEMIDI: Bool { bluetoothDestinationName != nil || ble.canSendDirectNotes }
     var hasExternalMIDIConnection: Bool { bleStatus.isConnected || hasExternalWiredMIDI }
     var pianoSampleCount: Int { audio.sampleCount }
-    var pianoSampleStatus: String { audio.sampleLibraryStatus }
 
-    private var hasExternalWiredMIDI: Bool {
-        (wiredSources + wiredDestinations).contains { !Self.isNetworkSession($0.name) }
+    var visibleWiredSources: [CoreMIDIPort] {
+        wiredSources.filter { !CoreMIDIManager.isNetworkSession($0.name) }
     }
 
-    private static func isNetworkSession(_ name: String) -> Bool {
-        name.lowercased().replacingOccurrences(of: "[^a-z0-9]+", with: "", options: .regularExpression)
-            .hasPrefix("networksession")
+    var visibleWiredDestinations: [CoreMIDIPort] {
+        wiredDestinations.filter { !CoreMIDIManager.isNetworkSession($0.name) }
+    }
+
+    private var hasExternalWiredMIDI: Bool {
+        !visibleWiredSources.isEmpty || !visibleWiredDestinations.isEmpty
     }
 
     func startBLEScan() {
@@ -470,7 +475,7 @@ final class MainViewModel: ObservableObject {
             if selectedSongID == id { selectedSongID = updated.first?.id ?? PracticeSong.demo.id }
             if let scoreURL = removed.scoreURL { try? FileManager.default.removeItem(at: scoreURL) }
         } catch {
-            importMessage = "Could not remove the song: \(error.localizedDescription)"
+            importMessage = LocalizedCopy(language: language).removeSongFailed(error.localizedDescription)
         }
     }
 
@@ -480,7 +485,7 @@ final class MainViewModel: ObservableObject {
             try historyStore.save([])
             practiceHistory = []
         } catch {
-            importMessage = "Could not clear practice history: \(error.localizedDescription)"
+            importMessage = LocalizedCopy(language: language).clearHistoryFailed(error.localizedDescription)
         }
     }
 
@@ -504,7 +509,7 @@ final class MainViewModel: ObservableObject {
         do {
             let fileExtension = url.pathExtension.lowercased()
             guard fileExtension == "mid" || fileExtension == "midi" else {
-                importMessage = "Choose a Standard MIDI file (.mid or .midi)."
+                importMessage = LocalizedCopy(language: language).invalidMIDIFile
                 return
             }
             let data = try Data(contentsOf: url)
@@ -514,16 +519,16 @@ final class MainViewModel: ObservableObject {
             )
             if let existing = songs.first(where: { $0.id == song.id }) {
                 selectSong(existing.id)
-                importMessage = "\(existing.title) is already in the library."
+                importMessage = LocalizedCopy(language: language).songAlreadyInLibrary(existing.title)
             } else {
                 let updatedSongs = songs + [song]
                 try libraryStore.save(updatedSongs)
                 songs = updatedSongs
                 selectSong(song.id)
-                importMessage = "Imported \(song.title)."
+                importMessage = LocalizedCopy(language: language).importedSong(song.title)
             }
         } catch {
-            importMessage = error.localizedDescription
+            importMessage = LocalizedCopy(language: language).importMIDIFailed(error.localizedDescription)
         }
     }
 
@@ -554,9 +559,9 @@ final class MainViewModel: ObservableObject {
             if let oldURL, oldURL.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL {
                 try? FileManager.default.removeItem(at: oldURL)
             }
-            importMessage = "MusicXML score attached to \(songs[index].title)."
+            importMessage = LocalizedCopy(language: language).scoreAttached(songs[index].title)
         } catch {
-            importMessage = "Could not import the score: \(error.localizedDescription)"
+            importMessage = LocalizedCopy(language: language).importScoreFailed(error.localizedDescription)
         }
     }
 
@@ -744,7 +749,7 @@ final class MainViewModel: ObservableObject {
         do {
             try historyStore.save(practiceHistory)
         } catch {
-            importMessage = "Could not save practice history: \(error.localizedDescription)"
+            importMessage = LocalizedCopy(language: language).saveHistoryFailed(error.localizedDescription)
         }
         practiceSession = nil
         practiceStartedAtNanoseconds = nil

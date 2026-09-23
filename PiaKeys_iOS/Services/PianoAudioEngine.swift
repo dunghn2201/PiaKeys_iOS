@@ -54,12 +54,6 @@ final class PianoAudioEngine {
 
     var sampleCount: Int { samples.count }
 
-    var sampleLibraryStatus: String {
-        samples.isEmpty
-            ? "Piano samples unavailable — check app resources"
-            : "Upright Piano KW · \(samples.count) FLAC samples ready"
-    }
-
     init() {
         samples = loadSamples()
         if samples.isEmpty {

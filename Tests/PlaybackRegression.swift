@@ -15,6 +15,10 @@ final class CoreMIDIManager {
     var canSendNotes: Bool { !destinations.isEmpty }
     var canSendDirectNotes: Bool { false }
     var sent: [String] = []
+    static func isNetworkSession(_ value: String) -> Bool {
+        value.lowercased().replacingOccurrences(of: "[^a-z0-9]+", with: "", options: .regularExpression)
+            .hasPrefix("networksession")
+    }
     func refresh() {}
     func canSendNotes(to destinationName: String?) -> Bool { canSendNotes }
     func destinationName(matching candidateNames: [String]) -> String? { destinations.first?.name }

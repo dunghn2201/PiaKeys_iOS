@@ -3,6 +3,7 @@ import SwiftUI
 struct StaffPreview: View {
     let notes: [MIDINoteEvent]
     let activeNote: Int?
+    var language: PiaKeysLanguage = .english
     var height: CGFloat = 190
 
     var body: some View {
@@ -33,7 +34,7 @@ struct StaffPreview: View {
         }
         .frame(height: height)
         .background(PiaKeysTheme.paleBlue.opacity(0.5), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .accessibilityLabel("Grand staff preview")
+        .accessibilityLabel(LocalizedCopy(language: language).grandStaffPreview)
     }
 
     private func drawStaff(
@@ -99,6 +100,7 @@ struct SongStaffPreview: View {
     let song: PracticeSong?
     let positionMilliseconds: Int64
     let activeNotes: Set<Int>
+    var language: PiaKeysLanguage = .english
     var height: CGFloat = 190
 
     var visibleEvents: [MIDINoteEvent] {
@@ -121,10 +123,16 @@ struct SongStaffPreview: View {
             GeneratedSongScoreView(
                 song: song,
                 positionMilliseconds: positionMilliseconds,
-                height: height
+                height: height,
+                language: language
             )
         } else {
-            StaffPreview(notes: visibleEvents, activeNote: activeNotes.sorted().last, height: height)
+            StaffPreview(
+                notes: visibleEvents,
+                activeNote: activeNotes.sorted().last,
+                language: language,
+                height: height
+            )
         }
     }
 }

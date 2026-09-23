@@ -254,7 +254,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "PiaKeys: Piano MIDI";
+				INFOPLIST_KEY_CFBundleDisplayName = "Piano MIDI";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "PiaKeys connects to Bluetooth MIDI pianos to receive and play notes.";
 				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "PiaKeys connects to Bluetooth MIDI pianos to receive and play notes.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -305,7 +305,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "PiaKeys: Piano MIDI";
+				INFOPLIST_KEY_CFBundleDisplayName = "Piano MIDI";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "PiaKeys connects to Bluetooth MIDI pianos to receive and play notes.";
 				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "PiaKeys connects to Bluetooth MIDI pianos to receive and play notes.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
