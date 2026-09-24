@@ -29,15 +29,21 @@ struct LocalizedCopy {
     var midiReady: String { value("MIDI", "MIDI", "MIDI") }
     var sheetPreview: String { value("Sheet preview", "Xem trước bản nhạc", "楽譜プレビュー") }
     var sheetMusic: String { value("Sheet music", "Bản nhạc", "楽譜") }
+    var visualization: String { value("Visualization", "Kiểu hiển thị", "表示形式") }
+    var sheetMusicMode: String { value("Sheet", "Khuông nhạc", "楽譜") }
+    var fallingNotesMode: String { value("Falling notes", "Nốt rơi", "落下ノート") }
+    var fallingNotes: String { value("Falling notes", "Nốt rơi", "落下ノート") }
     var previousPage: String { value("Previous page", "Trang trước", "前のページ") }
     var nextPage: String { value("Next page", "Trang sau", "次のページ") }
     var openSheet: String { value("Open sheet music", "Mở bản nhạc", "楽譜を開く") }
+    var openFallingNotes: String { value("Open falling notes", "Mở nốt rơi", "落下ノートを開く") }
     var close: String { value("Done", "Xong", "完了") }
     var keyboard: String { value("Keyboard", "Bàn phím", "鍵盤") }
     var noNotes: String { value("Play a key to begin.", "Hãy chơi một phím để bắt đầu.", "鍵盤を弾いて始めましょう。") }
     var chord: String { value("Chord", "Hợp âm", "コード") }
     var noChord: String { value("Play a major or minor triad", "Chơi hợp âm trưởng hoặc thứ", "長三和音・短三和音を弾く") }
     var songStudio: String { value("Song studio", "Phòng tập bài nhạc", "ソングスタジオ") }
+    var songList: String { value("Song list", "Danh sách bài", "曲一覧") }
     var importMIDI: String { value("Import MIDI", "Nhập MIDI", "MIDIを読み込む") }
     var importScore: String { value("Import MusicXML", "Nhập MusicXML", "MusicXMLを読み込む") }
     var play: String { value("Play", "Phát", "再生") }

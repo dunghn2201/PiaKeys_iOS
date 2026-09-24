@@ -20,6 +20,7 @@ struct MIDIWorkspaceView: View {
     @State private var compactKeyboardFirstNote = Self.defaultCompactKeyboardFirstNote
     @State private var scoreContentHeight: CGFloat = 180
     @State private var sheetDetail: SheetDetail?
+    @State private var fallingNotesDetailSong: PracticeSong?
 
     private static let compactKeyboardMinimumNote = 21
     private static let compactKeyboardMaximumNote = 108
@@ -76,10 +77,15 @@ struct MIDIWorkspaceView: View {
             case .songStudio:
                 songPlayerCard
 
-                if let scoreURL = viewModel.selectedSong?.scoreURL {
-                    scoreCard(url: scoreURL)
-                } else {
-                    songStaffCard
+                switch viewModel.songVisualizationMode {
+                case .sheetMusic:
+                    if let scoreURL = viewModel.selectedSong?.scoreURL {
+                        scoreCard(url: scoreURL)
+                    } else {
+                        songStaffCard
+                    }
+                case .fallingNotes:
+                    fallingNotesCard
                 }
 
                 if horizontalSizeClass == .regular {
@@ -110,6 +116,9 @@ struct MIDIWorkspaceView: View {
             }
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
+        }
+        .fullScreenCover(item: $fallingNotesDetailSong) { _ in
+            FallingNotesDetailView(viewModel: viewModel)
         }
     }
 
@@ -276,7 +285,20 @@ struct MIDIWorkspaceView: View {
                     }
                     .pickerStyle(.menu)
                     Toggle(copy.countIn, isOn: $viewModel.countInEnabled)
-                        .font(.caption)
+                    .font(.caption)
+                }
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(copy.visualization)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Picker(copy.visualization, selection: $viewModel.songVisualizationMode) {
+                        ForEach(SongVisualizationMode.allCases) { mode in
+                            Text(mode.localizedLabel(in: copy.language)).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityLabel(copy.visualization)
                 }
 
                 if viewModel.countInEnabled {
@@ -312,6 +334,55 @@ struct MIDIWorkspaceView: View {
         case .left: copy.leftHand
         case .right: copy.rightHand
         }
+    }
+
+    private var fallingNotesCard: some View {
+        PiaKeysCard {
+            VStack(alignment: .leading, spacing: 12) {
+                SectionTitle(
+                    title: copy.fallingNotes,
+                    subtitle: viewModel.selectedSong?.title,
+                    symbol: "rectangle.inset.filled"
+                )
+
+                if let song = viewModel.selectedSong {
+                    Button {
+                        fallingNotesDetailSong = song
+                    } label: {
+                        ZStack(alignment: .bottomTrailing) {
+                            PlaybackPositionView(position: viewModel.playbackPosition) { milliseconds in
+                                PianoRollView(
+                                    notes: song.notes.filter { viewModel.playbackHand.includes($0.hand) },
+                                    positionMilliseconds: milliseconds,
+                                    activeNotes: combinedActiveNotes,
+                                    tempo: song.tempo,
+                                    timeSignature: song.timeSignature,
+                                    language: viewModel.language,
+                                    height: horizontalSizeClass == .regular ? 410 : 350
+                                )
+                                .allowsHitTesting(false)
+                            }
+                            openFallingNotesHint
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(copy.openFallingNotes)
+                } else {
+                    ContentUnavailableView(copy.noNotes, systemImage: "music.note")
+                        .frame(height: 180)
+                }
+            }
+        }
+    }
+
+    private var openFallingNotesHint: some View {
+        Label(copy.openFallingNotes, systemImage: "arrow.up.left.and.arrow.down.right")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(PiaKeysTheme.purple)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(Color(uiColor: .systemBackground), in: Capsule())
+            .padding(10)
     }
 
     private var songStaffCard: some View {
@@ -697,6 +768,401 @@ private struct SheetMusicDetailView: View {
         // message updates scorePageCount. Keep that page until the count is
         // known; updatePageCount performs the final bounds check.
         scorePage = max(1, page)
+    }
+}
+
+/// Presents the falling-notes visual as a dedicated practice surface so the
+/// roll can use the full available width without the Song Studio scroll view
+/// competing for space with the other cards.
+private struct FallingNotesDetailView: View {
+    @ObservedObject var viewModel: MainViewModel
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var controlsVisible = true
+    @State private var controlsHideTaskID = 0
+    @State private var controlsHideDelay: TimeInterval?
+
+    private var copy: LocalizedCopy { .init(language: viewModel.language) }
+    private var usesCompactHeight: Bool { verticalSizeClass == .compact }
+    private var horizontalPadding: CGFloat { horizontalSizeClass == .regular ? 24 : 10 }
+    private var activeNotes: Set<Int> {
+        viewModel.heldNoteNumbers.union(viewModel.activeSongNotes)
+    }
+
+    var body: some View {
+        NavigationStack {
+            GeometryReader { container in
+                Group {
+                    if let song = viewModel.selectedSong {
+                        ZStack {
+                            // Keep the roll mounted while the controls fade. Replacing
+                            // the canvas itself during the tap animation briefly exposes
+                            // the screen background behind this full-screen surface.
+                            fallingNotesCanvas(song: song)
+                            contentTapSurface(
+                                in: container.size,
+                                isLandscape: container.size.width > container.size.height
+                            )
+                        }
+                        .overlay(alignment: .top) {
+                            topControls(
+                                song: song,
+                                isLandscape: container.size.width > container.size.height
+                            )
+                                .opacity(controlsVisible ? 1 : 0)
+                                .animation(
+                                    reduceMotion ? nil : .easeInOut(duration: 0.28),
+                                    value: controlsVisible
+                                )
+                                .allowsHitTesting(controlsVisible)
+                                .accessibilityHidden(!controlsVisible)
+                                .zIndex(1)
+                        }
+                        .overlay(alignment: .bottom) {
+                            playbackControls(song: song)
+                                .padding(.bottom, max(8, container.safeAreaInsets.bottom))
+                                .opacity(controlsVisible ? 1 : 0)
+                                .animation(
+                                    reduceMotion ? nil : .easeInOut(duration: 0.28),
+                                    value: controlsVisible
+                                )
+                                .allowsHitTesting(controlsVisible)
+                                .accessibilityHidden(!controlsVisible)
+                                .zIndex(1)
+                        }
+                    } else {
+                        ContentUnavailableView(copy.noNotes, systemImage: "music.note")
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background { PiaKeysBackground() }
+            }
+            .navigationTitle(copy.fallingNotes)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(usesCompactHeight ? .hidden : .visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    songMenu
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(copy.close) { dismiss() }
+                }
+            }
+        }
+        .onAppear {
+            if viewModel.songPlaying {
+                scheduleControlsHide(after: 2)
+            }
+        }
+        .onChange(of: viewModel.songPlaying) { _, isPlaying in
+            if isPlaying {
+                scheduleControlsHide(after: 2)
+            } else {
+                revealControls()
+            }
+        }
+        .task(id: controlsHideTaskID) {
+            guard let delay = controlsHideDelay else { return }
+
+            do {
+                try await Task.sleep(for: .seconds(delay))
+            } catch {
+                return
+            }
+
+            guard !Task.isCancelled else { return }
+            hideControls()
+            controlsHideDelay = nil
+        }
+    }
+
+    private var songMenu: some View {
+        Menu {
+            ForEach(viewModel.songs) { song in
+                Button {
+                    viewModel.selectSong(song.id)
+                    revealControls()
+                } label: {
+                    Label(
+                        song.title,
+                        systemImage: song.id == viewModel.selectedSongID ? "checkmark" : "music.note"
+                    )
+                }
+            }
+        } label: {
+            Image(systemName: "music.note.list")
+        }
+        .accessibilityLabel(copy.songList)
+    }
+
+    /// Keeps the falling-notes canvas at the full available size in either
+    /// orientation. The surrounding controls are layered above it so hiding
+    /// them never causes the piano roll or keyboard to be resized.
+    private func fallingNotesCanvas(song: PracticeSong) -> some View {
+        GeometryReader { proxy in
+            PlaybackPositionView(position: viewModel.playbackPosition) { milliseconds in
+                PianoRollView(
+                    notes: notes(for: song),
+                    positionMilliseconds: milliseconds,
+                    activeNotes: activeNotes,
+                    tempo: song.tempo,
+                    timeSignature: song.timeSignature,
+                    language: viewModel.language,
+                    height: max(1, proxy.size.height)
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 8)
+    }
+
+    @ViewBuilder
+    private func contentTapSurface(in size: CGSize, isLandscape: Bool) -> some View {
+        if controlsVisible {
+            contentTapRegion(in: size, isLandscape: isLandscape)
+        } else {
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: handleContentTap)
+        }
+    }
+
+    /// Reserves only the exposed roll for toggling controls. The transparent
+    /// top and bottom bands let the real header and playback buttons receive
+    /// taps instead of competing with this gesture surface.
+    private func contentTapRegion(in size: CGSize, isLandscape: Bool) -> some View {
+        let topExclusion: CGFloat
+        let bottomExclusion: CGFloat
+
+        if isLandscape {
+            topExclusion = min(170, max(96, size.height * 0.15))
+            bottomExclusion = min(230, max(140, size.height * 0.20))
+        } else {
+            topExclusion = min(360, max(220, size.height * 0.20))
+            bottomExclusion = min(420, max(220, size.height * 0.28))
+        }
+
+        return GeometryReader { proxy in
+            let rollTapHeight = max(1, proxy.size.height - topExclusion - bottomExclusion)
+
+            Rectangle()
+                .fill(.clear)
+                .frame(width: proxy.size.width, height: rollTapHeight)
+                .contentShape(Rectangle())
+                .position(
+                    x: proxy.size.width / 2,
+                    y: topExclusion + rollTapHeight / 2
+                )
+                .onTapGesture(perform: handleContentTap)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func topControls(song: PracticeSong, isLandscape: Bool) -> some View {
+        VStack(spacing: isLandscape ? 6 : 10) {
+            if isLandscape {
+                compactTopBar
+            }
+
+            detailHeader(song: song, isCompact: isLandscape)
+            handPicker
+        }
+        .padding(.top, isLandscape ? 0 : 8)
+        .padding(.bottom, isLandscape ? 6 : 10)
+        .frame(maxWidth: .infinity)
+        .background {
+            LinearGradient(
+                colors: [
+                    PiaKeysTheme.navy.opacity(0.82),
+                    PiaKeysTheme.navy.opacity(0.44),
+                    .clear
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+    }
+
+    private var compactTopBar: some View {
+        ZStack {
+            Text(copy.fallingNotes)
+                .font(.headline.weight(.semibold))
+                .lineLimit(1)
+
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+
+                songMenu
+                    .frame(width: 38, height: 34)
+                    .background(.thinMaterial, in: Capsule())
+
+                Button(copy.close) { dismiss() }
+                    .font(.subheadline.weight(.semibold))
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            }
+        }
+        .frame(height: 38)
+        .padding(.horizontal, horizontalPadding)
+    }
+
+    private func handleContentTap() {
+        if controlsVisible {
+            hideControls()
+        } else {
+            revealControls(for: 5)
+        }
+    }
+
+    private func revealControls(for duration: TimeInterval? = nil) {
+        controlsHideDelay = duration
+        controlsHideTaskID &+= 1
+        setControlsVisible(true)
+    }
+
+    private func scheduleControlsHide(after delay: TimeInterval) {
+        controlsHideDelay = delay
+        controlsHideTaskID &+= 1
+    }
+
+    private func hideControls() {
+        controlsHideDelay = nil
+        controlsHideTaskID &+= 1
+        setControlsVisible(false)
+    }
+
+    private func setControlsVisible(_ visible: Bool) {
+        guard controlsVisible != visible else { return }
+        controlsVisible = visible
+    }
+
+    private func detailHeader(song: PracticeSong, isCompact: Bool = false) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "rectangle.inset.filled")
+                .font((isCompact ? Font.headline : .title2).weight(.semibold))
+                .foregroundStyle(PiaKeysTheme.purple)
+                .frame(width: isCompact ? 30 : 34, height: isCompact ? 30 : 34)
+                .background(
+                    PiaKeysTheme.purple.opacity(0.14),
+                    in: RoundedRectangle(cornerRadius: isCompact ? 8 : 10, style: .continuous)
+                )
+
+            VStack(alignment: .leading, spacing: isCompact ? 1 : 3) {
+                Text(song.title)
+                    .font((isCompact ? Font.subheadline : .headline).weight(.bold))
+                    .lineLimit(1)
+                Text(song.composer)
+                    .font(isCompact ? .caption2 : .caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            VStack(alignment: .trailing, spacing: 3) {
+                Text("\(song.tempo) BPM")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                Text(song.timeSignature)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, horizontalPadding)
+    }
+
+    private func notes(for song: PracticeSong) -> [SongNote] {
+        song.notes.filter { viewModel.playbackHand.includes($0.hand) }
+    }
+
+    private var handPicker: some View {
+        Picker(copy.hands, selection: $viewModel.playbackHand) {
+            ForEach(PracticeHandSelection.allCases) { hand in
+                Text(handLabel(hand)).tag(hand)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .accessibilityLabel(copy.hands)
+        .padding(.horizontal, horizontalPadding)
+    }
+
+    private func playbackControls(song: PracticeSong) -> some View {
+        let durationMilliseconds = notes(for: song)
+            .map { $0.startMilliseconds + $0.durationMilliseconds }
+            .max() ?? 0
+
+        return VStack(spacing: 8) {
+            PlaybackPositionView(position: viewModel.playbackPosition) { milliseconds in
+                HStack(spacing: 10) {
+                    Slider(
+                        value: Binding(
+                            get: { Double(milliseconds) },
+                            set: { viewModel.seekSong(to: Int64($0.rounded())) }
+                        ),
+                        in: 0...Double(max(1, durationMilliseconds))
+                    )
+                    .tint(PiaKeysTheme.gold)
+
+                    Text(format(milliseconds))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(minWidth: 42, alignment: .trailing)
+                }
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    viewModel.toggleSongPlayback()
+                } label: {
+                    Label(
+                        viewModel.songPlaying ? copy.pause : copy.play,
+                        systemImage: viewModel.songPlaying ? "pause.fill" : "play.fill"
+                    )
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button {
+                    viewModel.resetSong()
+                    revealControls()
+                } label: {
+                    Image(systemName: "gobackward")
+                        .frame(width: 20)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel(copy.reset)
+
+                Menu {
+                    ForEach([0.5, 0.75, 1.0, 1.25, 1.5], id: \.self) { speed in
+                        Button("\(speed, specifier: "%.2g")×") {
+                            viewModel.playbackSpeed = speed
+                        }
+                    }
+                } label: {
+                    Label("\(viewModel.playbackSpeed, specifier: "%.2g")×", systemImage: "speedometer")
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel(copy.speed)
+            }
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
+        .background(.ultraThinMaterial)
+    }
+
+    private func handLabel(_ hand: PracticeHandSelection) -> String {
+        hand.localizedLabel(in: copy.language)
+    }
+
+    private func format(_ milliseconds: Int64) -> String {
+        let totalSeconds = max(0, milliseconds / 1_000)
+        return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
     }
 }
 

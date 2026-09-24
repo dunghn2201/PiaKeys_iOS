@@ -198,6 +198,24 @@ enum PracticeMode: String, CaseIterable, Identifiable, Codable, Sendable {
     }
 }
 
+/// Selects the visual representation used by Song Studio while preserving the
+/// same MIDI playback and practice timeline underneath.
+enum SongVisualizationMode: String, CaseIterable, Identifiable, Codable, Sendable {
+    case sheetMusic
+    case fallingNotes
+
+    var id: Self { self }
+
+    /// Returns the user-facing name for the selected visualization.
+    func localizedLabel(in language: PiaKeysLanguage) -> String {
+        let copy = LocalizedCopy(language: language)
+        switch self {
+        case .sheetMusic: return copy.sheetMusicMode
+        case .fallingNotes: return copy.fallingNotesMode
+        }
+    }
+}
+
 /// A simultaneous group of notes that the player must complete together.
 struct PracticeTarget: Identifiable, Hashable, Sendable {
     let id: UUID

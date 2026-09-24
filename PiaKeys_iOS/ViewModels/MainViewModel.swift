@@ -55,6 +55,9 @@ final class MainViewModel: ObservableObject {
 
     @Published private(set) var songs: [PracticeSong] = [.demo]
     @Published var selectedSongID = PracticeSong.demo.id
+    @Published var songVisualizationMode: SongVisualizationMode {
+        didSet { saveSettings() }
+    }
     @Published private(set) var songPlaying = false
     let playbackPosition = PlaybackPosition()
     private(set) var songPositionMilliseconds: Int64 {
@@ -212,6 +215,9 @@ final class MainViewModel: ObservableObject {
         playbackHand = PracticeHandSelection(rawValue: defaults.string(forKey: Keys.playbackHand) ?? "") ?? .both
         practiceMode = PracticeMode(rawValue: defaults.string(forKey: Keys.practiceMode) ?? "") ?? .playback
         practiceHand = PracticeHandSelection(rawValue: defaults.string(forKey: Keys.practiceHand) ?? "") ?? .both
+        songVisualizationMode = SongVisualizationMode(
+            rawValue: defaults.string(forKey: Keys.songVisualizationMode) ?? ""
+        ) ?? .sheetMusic
 
         do {
             songs = try libraryStore.load()
@@ -1200,6 +1206,7 @@ final class MainViewModel: ObservableObject {
         defaults.set(countInEnabled, forKey: Keys.countInEnabled)
         defaults.set(countInBars, forKey: Keys.countInBars)
         defaults.set(playbackHand.rawValue, forKey: Keys.playbackHand)
+        defaults.set(songVisualizationMode.rawValue, forKey: Keys.songVisualizationMode)
         defaults.set(practiceMode.rawValue, forKey: Keys.practiceMode)
         defaults.set(practiceHand.rawValue, forKey: Keys.practiceHand)
     }
@@ -1222,6 +1229,7 @@ final class MainViewModel: ObservableObject {
         static let countInEnabled = "count_in_enabled"
         static let countInBars = "count_in_bars"
         static let playbackHand = "playback_hand"
+        static let songVisualizationMode = "song_visualization_mode"
         static let practiceMode = "practice_mode"
         static let practiceHand = "practice_hand"
     }

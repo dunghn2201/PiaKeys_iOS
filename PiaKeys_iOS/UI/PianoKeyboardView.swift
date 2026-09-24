@@ -430,3 +430,298 @@ private struct PianoKeyTouchView: View {
         return PiaKeysTheme.navy.opacity(colorScheme == .dark ? 0.24 : 0.46)
     }
 }
+
+/// Shows MIDI notes descending toward a compact keyboard at the playback line.
+///
+/// The vertical position is derived directly from musical milliseconds, so a
+/// note reaches the keyboard exactly at its scheduled start time and its bar
+/// length remains proportional to the note duration. A single Canvas keeps the
+/// view lightweight when a song contains many simultaneous notes.
+struct PianoRollView: View {
+    let notes: [SongNote]
+    let positionMilliseconds: Int64
+    let activeNotes: Set<Int>
+    let tempo: Int
+    let timeSignature: String
+    let language: PiaKeysLanguage
+    var height: CGFloat = 350
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    private let lookAheadMilliseconds: Int64 = 4_000
+    private let lookBehindMilliseconds: Int64 = 180
+    private let activeTimingToleranceMilliseconds: Int64 = 40
+
+    private var noteRange: ClosedRange<Int> {
+        guard let minimum = notes.map(\.noteNumber).min(),
+              let maximum = notes.map(\.noteNumber).max() else {
+            return 36...84
+        }
+
+        // Keep the visible keyboard readable for ordinary songs while falling
+        // back to the full piano when an imported song spans widely. The
+        // padding is intentionally measured in semitones so the roll stays
+        // compact instead of adding unused octaves around the melody.
+        let lower = max(21, minimum - 4)
+        let upper = min(108, maximum + 4)
+        if upper - lower > 60 { return 21...108 }
+        return lower...min(108, max(lower + 24, upper))
+    }
+
+    private var beatsPerBar: Int {
+        let numerator = timeSignature.split(separator: "/").first.flatMap { Int($0) } ?? 4
+        return max(1, numerator)
+    }
+
+    private var visibleNotes: [SongNote] {
+        let lowerBound = max(0, positionMilliseconds - lookBehindMilliseconds)
+        let upperBound = positionMilliseconds + lookAheadMilliseconds
+        return notes.filter { note in
+            let end = note.startMilliseconds + max(1, note.durationMilliseconds)
+            return end >= lowerBound && note.startMilliseconds <= upperBound
+        }
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let keyboardHeight = min(88, max(72, proxy.size.height * 0.24))
+            let rollHeight = max(1, proxy.size.height - keyboardHeight)
+            let range = noteRange
+
+            VStack(spacing: 0) {
+                Canvas { context, size in
+                    drawRoll(
+                        context: &context,
+                        size: size,
+                        range: range,
+                        notes: visibleNotes,
+                        positionMilliseconds: positionMilliseconds
+                    )
+                }
+                .frame(height: rollHeight)
+
+                PianoKeyboardView(
+                    activeNotes: activeNotes,
+                    firstNote: range.lowerBound,
+                    lastNote: range.upperBound,
+                    height: keyboardHeight,
+                    fitToWidth: true,
+                    language: language,
+                    onNoteOn: { _ in },
+                    onNoteOff: { _ in }
+                )
+                .frame(height: keyboardHeight)
+            }
+        }
+        .frame(height: height)
+        .background(PiaKeysTheme.navy)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(colorScheme == .dark ? 0.14 : 0.20), lineWidth: 0.8)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(LocalizedCopy(language: language).fallingNotes)
+        .accessibilityValue(accessibilityPosition)
+    }
+
+    private var accessibilityPosition: String {
+        let seconds = max(0, positionMilliseconds) / 1_000
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    private func drawRoll(
+        context: inout GraphicsContext,
+        size: CGSize,
+        range: ClosedRange<Int>,
+        notes: [SongNote],
+        positionMilliseconds: Int64
+    ) {
+        let bounds = CGRect(origin: .zero, size: size)
+        let whiteNotes = Array(range).filter { !$0.isBlackPianoKey }
+        let whiteWidth = size.width / CGFloat(max(1, whiteNotes.count))
+        let hitLineY = size.height - 2
+        let pixelsPerMillisecond = max(0.001, (size.height - 14) / CGFloat(lookAheadMilliseconds))
+
+        context.fill(Path(bounds), with: .color(PiaKeysTheme.navy))
+        drawGrid(
+            context: &context,
+            size: size,
+            whiteNotes: whiteNotes,
+            whiteWidth: whiteWidth,
+            hitLineY: hitLineY,
+            pixelsPerMillisecond: pixelsPerMillisecond,
+            positionMilliseconds: positionMilliseconds
+        )
+
+        for note in notes {
+            guard let noteRect = noteRect(
+                for: note,
+                range: range,
+                whiteNotes: whiteNotes,
+                whiteWidth: whiteWidth,
+                hitLineY: hitLineY,
+                pixelsPerMillisecond: pixelsPerMillisecond,
+                positionMilliseconds: positionMilliseconds,
+                size: size
+            ) else { continue }
+            drawNote(
+                context: &context,
+                note: note,
+                rect: noteRect,
+                active: isActive(note: note, at: positionMilliseconds)
+            )
+        }
+
+        var hitPath = Path()
+        hitPath.move(to: CGPoint(x: 0, y: hitLineY))
+        hitPath.addLine(to: CGPoint(x: size.width, y: hitLineY))
+        context.stroke(hitPath, with: .color(Color.white.opacity(0.70)), lineWidth: 1.4)
+    }
+
+    private func drawGrid(
+        context: inout GraphicsContext,
+        size: CGSize,
+        whiteNotes: [Int],
+        whiteWidth: CGFloat,
+        hitLineY: CGFloat,
+        pixelsPerMillisecond: CGFloat,
+        positionMilliseconds: Int64
+    ) {
+        for index in 0...whiteNotes.count {
+            let x = CGFloat(index) * whiteWidth
+            var path = Path()
+            path.move(to: CGPoint(x: x, y: 0))
+            path.addLine(to: CGPoint(x: x, y: size.height))
+            context.stroke(
+                path,
+                with: .color(Color.white.opacity(index % 7 == 0 ? 0.16 : 0.07)),
+                lineWidth: index % 7 == 0 ? 1 : 0.6
+            )
+        }
+
+        let beatMilliseconds = Int64(max(1, 60_000 / max(1, tempo)))
+        let firstBeat = max(0, positionMilliseconds - lookBehindMilliseconds) / beatMilliseconds
+        let lastBeat = (positionMilliseconds + lookAheadMilliseconds) / beatMilliseconds + 1
+        for beatIndex in firstBeat...lastBeat {
+            let beatTime = beatIndex * beatMilliseconds
+            let y = hitLineY - CGFloat(beatTime - positionMilliseconds) * pixelsPerMillisecond
+            guard y >= 0, y <= size.height else { continue }
+
+            let isBar = beatIndex % Int64(beatsPerBar) == 0
+            var path = Path()
+            path.move(to: CGPoint(x: 0, y: y))
+            path.addLine(to: CGPoint(x: size.width, y: y))
+            context.stroke(
+                path,
+                with: .color(Color.white.opacity(isBar ? 0.14 : 0.055)),
+                lineWidth: isBar ? 1 : 0.6
+            )
+            if isBar {
+                context.draw(
+                    Text("\(beatIndex / Int64(beatsPerBar) + 1)")
+                        .font(.caption2.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.52)),
+                    at: CGPoint(x: 14, y: max(10, y - 8))
+                )
+            }
+        }
+    }
+
+    private func noteRect(
+        for note: SongNote,
+        range: ClosedRange<Int>,
+        whiteNotes: [Int],
+        whiteWidth: CGFloat,
+        hitLineY: CGFloat,
+        pixelsPerMillisecond: CGFloat,
+        positionMilliseconds: Int64,
+        size: CGSize
+    ) -> CGRect? {
+        guard let keyRect = keyRect(
+            for: note.noteNumber,
+            range: range,
+            whiteNotes: whiteNotes,
+            whiteWidth: whiteWidth
+        ) else { return nil }
+
+        let endMilliseconds = note.startMilliseconds + max(1, note.durationMilliseconds)
+        let top = hitLineY - CGFloat(endMilliseconds - positionMilliseconds) * pixelsPerMillisecond
+        let bottom = hitLineY - CGFloat(note.startMilliseconds - positionMilliseconds) * pixelsPerMillisecond
+        guard bottom > 0, top < size.height else { return nil }
+
+        let clippedTop = max(1, top)
+        let clippedBottom = min(hitLineY - 1, bottom)
+        guard clippedBottom > clippedTop else { return nil }
+        return CGRect(
+            x: keyRect.minX,
+            y: clippedTop,
+            width: keyRect.width,
+            height: max(4, clippedBottom - clippedTop)
+        )
+    }
+
+    /// Highlights only the note currently crossing or sounding at the
+    /// playhead. Matching by pitch alone would also brighten future repeated
+    /// notes that share the same MIDI note number.
+    private func isActive(note: SongNote, at positionMilliseconds: Int64) -> Bool {
+        guard activeNotes.contains(note.noteNumber) else { return false }
+
+        let startMilliseconds = note.startMilliseconds
+        let endMilliseconds = note.startMilliseconds + max(1, note.durationMilliseconds)
+        let tolerance = activeTimingToleranceMilliseconds
+        return startMilliseconds <= positionMilliseconds + tolerance
+            && endMilliseconds >= positionMilliseconds - tolerance
+    }
+
+    private func keyRect(
+        for note: Int,
+        range: ClosedRange<Int>,
+        whiteNotes: [Int],
+        whiteWidth: CGFloat
+    ) -> CGRect? {
+        guard range.contains(note), !whiteNotes.isEmpty else { return nil }
+
+        if note.isBlackPianoKey {
+            guard let precedingNote = whiteNotes.last(where: { $0 < note }),
+                  let index = whiteNotes.firstIndex(of: precedingNote) else { return nil }
+            return CGRect(
+                x: CGFloat(index + 1) * whiteWidth - whiteWidth * 0.32,
+                y: 0,
+                width: max(5, whiteWidth * 0.64),
+                height: 1
+            )
+        }
+
+        guard let index = whiteNotes.firstIndex(of: note) else { return nil }
+        return CGRect(
+            x: CGFloat(index) * whiteWidth + whiteWidth * 0.10,
+            y: 0,
+            width: max(5, whiteWidth * 0.80),
+            height: 1
+        )
+    }
+
+    private func drawNote(
+        context: inout GraphicsContext,
+        note: SongNote,
+        rect: CGRect,
+        active: Bool
+    ) {
+        let color = note.hand == .left
+            ? Color(red: 0.18, green: 0.58, blue: 1.0)
+            : PiaKeysTheme.purple
+        let radius = min(7, rect.width * 0.28)
+        let glowRect = rect.insetBy(dx: -2.5, dy: -1.5)
+        let glowPath = Path(roundedRect: glowRect, cornerRadius: radius + 2)
+        context.fill(glowPath, with: .color(color.opacity(active ? 0.36 : 0.15)))
+
+        let notePath = Path(roundedRect: rect, cornerRadius: radius)
+        context.fill(notePath, with: .color(color.opacity(active ? 0.98 : 0.76)))
+        context.stroke(
+            notePath,
+            with: .color(Color.white.opacity(active ? 0.92 : 0.62)),
+            lineWidth: active ? 1.4 : 0.9
+        )
+    }
+}
